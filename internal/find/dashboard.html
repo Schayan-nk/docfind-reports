@@ -1,0 +1,3090 @@
+<!doctype html>
+<!-- dir=rtl on the root, so every table, filter row, scrollbar and pager runs
+     right-to-left without each one having to ask for it. -->
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="/favicon.ico">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#142F40">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="گزارش‌ها">
+<title>گزارش‌ها</title>
+<!--
+  Charts come from Chart.js, served from this binary rather than a CDN: the
+  office sits behind a filter that blocks uncategorised addresses, a
+  hot-linked library is a third party who can change what runs inside an
+  authenticated page, and a cross-origin script is awkward for the service
+  worker to cache. Downloaded once, reviewed, embedded.
+-->
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* The reports grid earns the wider column; the app bar reads this to
+     line its own contents up with the page's. */
+  body { --page-max: var(--content-wide); }
+
+  /* Tokens, the reset and the shared primitives all come from app.css. What
+     follows is only what the reports page itself needs. */
+
+  /* minmax(0, 1fr), not the implicit 1fr: a grid track sized auto or 1fr
+     carries min:auto, so it grows to its widest child's min-content size and
+     every sibling stretches with it. Measured on a 390px phone, this track
+     resolved to 393px inside a 358px content box and the whole page scrolled
+     sideways -- 404px of content in a 380px viewport. Letting the track shrink
+     puts the overflow back inside the scroll containers that exist for it. */
+  main {
+    padding:16px; display:grid; grid-template-columns:minmax(0, 1fr);
+    gap:16px; max-width:var(--content-wide); margin-inline:auto;
+  }
+
+  .widget {
+    background:var(--surface); border:1px solid var(--line-soft);
+    border-radius:var(--radius-xl); overflow:hidden; box-shadow:var(--shadow);
+  }
+  .widget > h2 {
+    margin:0; padding:13px 16px; font-size:15.5px; font-weight:650;
+    border-bottom:1px solid var(--line-soft);
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  }
+  .widget > h2 .spacer { margin-inline-start:auto; }
+
+  /* Filters read as a form panel above the report, the way reporting tools lay
+     them out: everything adjustable in one block at the top. */
+  .filters { display:flex; flex-wrap:wrap; gap:11px; padding:13px 16px;
+             border-bottom:1px solid var(--line-soft); background:var(--surface-2); }
+  .filters label { font-size:12.5px; color:var(--fg-muted); display:block; margin-bottom:4px; font-weight:550; }
+  .filters input, .filters select {
+    padding:8px 11px; font-size:14.5px; background:var(--bg); color:var(--fg);
+    border:1px solid var(--line); border-radius:9px; min-width:150px;
+    font-family:inherit; transition:border-color .13s, box-shadow .13s;
+  }
+  .filters input:focus, .filters select:focus {
+    outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--ring);
+  }
+  .filters input::placeholder { color:var(--fg-faint); }
+  /* A chevron drawn as a background image rather than the platform arrow,
+     which sits on the wrong edge in an RTL control on Windows. */
+  .filters select {
+    appearance:none; cursor:pointer; padding-inline-start:32px;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' fill='none' stroke='%239aa9c4' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:left 11px center;
+  }
+  .filters select:hover { border-color:var(--accent); }
+
+  /* ---- multi-value filters ----
+     A filter that takes several values at once: the chosen ones sit in the box
+     as removable tokens and the reader keeps typing beside them. The box wears
+     the border and the focus ring that an ordinary field wears, so a row of
+     filters still reads as one row of controls -- the field inside it is
+     stripped of both, or there would be a box inside a box. */
+  .filters .chipfield {
+    display:flex; flex-wrap:wrap; align-items:center; gap:5px;
+    padding:4px 6px; min-width:170px; max-width:100%;
+    background:var(--bg); border:1px solid var(--line); border-radius:9px;
+    transition:border-color .13s, box-shadow .13s;
+  }
+  /* focus-within, not :focus: the focus is on the field or on a token's remove
+     button, and the whole control has to look active either way. */
+  .filters .chipfield:focus-within {
+    border-color:var(--accent); box-shadow:0 0 0 3px var(--ring);
+  }
+  .filters .chipfield input[type="hidden"] { display:none; }
+  /* The tokens wrap among themselves and the whole run shrinks before the
+     typing field does. Hidden when there are none, or the flex gap would leave
+     a five-pixel notch in front of an empty box. */
+  .filters .chipfield .chips {
+    display:flex; flex-wrap:wrap; gap:5px; min-width:0;
+  }
+  .filters .chipfield .chips:empty { display:none; }
+  /* The typing field grows into whatever the tokens leave and wraps onto a new
+     line when they leave too little. flex-basis is what makes an empty box
+     still wide enough to read a placeholder in. */
+  .filters .chipfield .chiptype {
+    flex:1 1 90px; min-width:60px; width:auto;
+    padding:4px 5px; border:0; background:transparent; border-radius:6px;
+  }
+  .filters .chipfield .chiptype:focus { outline:none; box-shadow:none; border:0; }
+  .chip-tok {
+    display:inline-flex; align-items:center; gap:3px; max-width:100%;
+    padding-block:2px; padding-inline-start:8px; padding-inline-end:2px;
+    border-radius:7px; font-size:13px; line-height:1.5;
+    background:var(--accent-soft); color:var(--fg);
+    border:1px solid rgb(229 100 29 / .42);
+  }
+  .chip-tok .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:168px; }
+  /* A real button, so a token is removable with the keyboard as well as the
+     pointer -- Tab reaches it and Enter or Space takes the token off. */
+  .chip-tok .x {
+    flex:none; border:0; background:none; cursor:pointer;
+    color:var(--fg-muted); font:inherit; font-size:15px; line-height:1;
+    padding:1px 4px; border-radius:5px;
+  }
+  .chip-tok .x:hover { background:var(--bad-bg); color:var(--bad); }
+  .chip-tok .x:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  /* Said in words under the box rather than left to the reader to discover: a
+     token field is not a control most people here have met. */
+  .chiphint { display:block; margin-top:4px; font-size:11.5px; color:var(--fg-faint); }
+
+  /* ---- suggestions ----
+     A list of its own, replacing <datalist>. It is placed with the same
+     fixed-position helper the date picker uses, for the same reason: inside
+     the field's wrapper it would be clipped by the filter panel and would
+     stack under the table header. */
+  .sugg {
+    position:fixed; z-index:60; max-height:min(46vh, 340px); overflow:auto;
+    padding:6px; border-radius:12px;
+    background:var(--surface-2); border:1px solid var(--line);
+    box-shadow:0 2px 4px rgb(0 0 0 / .3), 0 12px 28px -8px rgb(0 0 0 / .55);
+    /* Scoped scrollbar colours: the panel is dark and the platform scrollbar
+       on Windows is not. */
+    scrollbar-width:thin; scrollbar-color:var(--line) transparent;
+    animation:sugg-in .13s var(--ease, ease) both;
+  }
+  @keyframes sugg-in { from { opacity:0; transform:translateY(-4px); } }
+  .sugg-item {
+    display:block; width:100%; padding:8px 10px; border:0; cursor:pointer;
+    background:transparent; color:var(--fg); font:inherit; font-size:14.5px;
+    text-align:start; border-radius:8px; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis;
+  }
+  /* One highlight class for the pointer and the keyboard, so the two cannot
+     both be showing at once and leave two rows looking chosen. */
+  .sugg-item:hover, .sugg-item.on {
+    background:var(--accent-soft); color:var(--fg);
+  }
+  .sugg-item.on { box-shadow:inset 2px 0 0 var(--accent); }
+  /* The part that was typed, inside each suggestion: this is what says why
+     the row is in the list. */
+  .sugg-item b { color:var(--accent-lift); font-weight:700; }
+  .sugg-empty, .sugg-load {
+    display:flex; align-items:center; gap:9px; padding:9px 10px;
+    font-size:13px; color:var(--fg-faint);
+  }
+  /* Three dots rising in turn, which is the smallest thing that reads as
+     "still coming" rather than "nothing to show". The native datalist had no
+     way of saying this: an unanswered field looked like an empty one. */
+  .sugg-dots { display:inline-flex; gap:4px; flex:none; }
+  .sugg-dots i {
+    display:block; width:6px; height:6px; border-radius:50%;
+    background:var(--accent); opacity:.35;
+    animation:sugg-dot 1s infinite ease-in-out;
+  }
+  .sugg-dots i:nth-child(2) { animation-delay:.15s; }
+  .sugg-dots i:nth-child(3) { animation-delay:.3s; }
+  @keyframes sugg-dot {
+    0%, 80%, 100% { opacity:.3; transform:translateY(0); }
+    40%           { opacity:1;  transform:translateY(-4px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sugg { animation:none; }
+    .sugg-dots i { animation:none; opacity:.7; }
+  }
+  :root[data-motion="reduce"] .sugg { animation:none; }
+  :root[data-motion="reduce"] .sugg-dots i { animation:none; opacity:.7; }
+
+  /* ---- date picker: styles in app.css, behaviour in datepick.js ---- */
+  /* ---- automatic findings under a chart ---- */
+  .insights { margin-top:14px; padding-top:14px; border-top:1px solid var(--line-soft); }
+  .insights-head {
+    margin:0 0 10px; font-size:13px; font-weight:650; letter-spacing:.02em;
+    color:var(--fg-muted); text-transform:none;
+  }
+  .insight {
+    display:flex; gap:11px; align-items:flex-start;
+    padding:11px 13px; margin-bottom:7px;
+    border:1px solid var(--line-soft); border-inline-start:3px solid var(--line);
+    border-radius:var(--radius); background:var(--surface-2);
+  }
+  /* The content column fills the card.
+     Without this it is a plain flex item, which shrink-wraps to its own
+     content -- so a finding with a short sentence gave its chart a 300px box
+     while the one below it got 1404px, on the same page. min-width:0 because a
+     flex item will not shrink below its content's intrinsic width otherwise,
+     which is what lets the long Persian labels ellipsize instead of pushing
+     the box wider than the card. */
+  .insight > div { flex:1 1 auto; min-width:0; }
+  /* Level shows in the border and in a word, never in colour alone. */
+  .insight.act   { border-inline-start-color:var(--accent); }
+  .insight.watch { border-inline-start-color:var(--warn); }
+  .insight .ic { flex:none; width:20px; text-align:center; color:var(--fg-faint); font-size:17px; }
+  /* The lifted orange, not the base one: this card's ground is --surface-2,
+     where the accent measures 2.78:1 and an icon needs 3:1. */
+  .insight.act .ic   { color:var(--accent-lift); }
+  .insight.watch .ic { color:var(--warn); }
+  /* The findings' text. Read across a meeting-room table, so larger
+     and heavier than the application's default, and the muted second line
+     of each finding takes a real colour rather than a faded one. */
+  .insight p { margin:0; font-size:15.5px; font-weight:550; line-height:1.8; color:var(--fg); }
+  .insight p b { font-weight:750; color:#fff; }
+  .insight .lvl {
+    display:inline-block; margin-top:5px; padding:1px 8px; border-radius:var(--radius-full);
+    font-size:11.5px; font-weight:650; background:var(--surface-3); color:var(--fg-muted);
+  }
+  .insight.act .lvl   { background:var(--accent-soft); color:var(--accent-lift); }
+  .insight.watch .lvl { background:var(--warn-bg); color:var(--warn); }
+  .insights-foot { margin:9px 2px 0; font-size:13px; color:var(--fg-muted); line-height:1.75; }
+
+  /* ---- the builder tile, the one call to action in the list ---- */
+  .analysis-card { border-inline-start:3px solid var(--accent); }
+
+  /* ---- table controls ---- */
+  .tablebar {
+    display:flex; align-items:center; gap:var(--s2); position:relative;
+    padding:10px 16px; border-bottom:1px solid var(--line-soft); background:var(--surface-2);
+  }
+  .tablebar .count { margin-inline-start:auto; }
+  /* The whole heading is the sort target, not a small icon beside it: a
+     column heading is already the thing people point at. */
+  .sortbtn {
+    display:inline-flex; align-items:center; gap:6px; width:100%;
+    padding:0; border:0; background:none; cursor:pointer;
+    font:inherit; color:inherit; text-align:start;
+  }
+  .sortbtn .lbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sortbtn:hover { color:var(--accent-lift); }
+  /* Idle sits at low contrast so twenty of them do not compete with the
+     headings themselves; it lifts on hover to confirm it is a control, and
+     the active one is full strength because it is carrying information. */
+  .sortmark { flex:none; font-size:12px; line-height:1; }
+  .sortmark.idle { color:var(--fg-faint); opacity:.55; transition:opacity var(--fast) var(--ease); }
+  .sortbtn:hover .sortmark.idle { opacity:1; color:var(--accent-lift); }
+  .sortmark.on { color:var(--accent-lift); font-size:13px; font-weight:700; }
+
+  .colmenu {
+    position:absolute; z-index:var(--z-popover); top:calc(100% + 6px); inset-inline-start:16px;
+    width:270px; max-height:340px; overflow-y:auto; padding:6px;
+    border-radius:var(--radius-lg);
+    background:rgb(24 34 58 / .84); border:1px solid rgb(255 255 255 / .09);
+    box-shadow:var(--shadow-lg), inset 0 1px 0 rgb(255 255 255 / .06);
+  }
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .colmenu { background:rgb(24 34 58 / .64);
+               -webkit-backdrop-filter:blur(22px) saturate(180%);
+               backdrop-filter:blur(22px) saturate(180%); }
+  }
+  .colmenu-head, .colmenu-foot {
+    padding:8px 10px; font-size:12.5px; color:var(--fg-muted);
+  }
+  .colmenu-foot { border-top:1px solid var(--line-soft); padding-top:10px; }
+  .colmenu label {
+    display:flex; align-items:center; gap:9px; padding:7px 10px;
+    border-radius:var(--radius-sm); font-size:14px; cursor:pointer;
+  }
+  .colmenu label:hover { background:var(--surface-2); }
+  .colmenu input { accent-color:var(--accent); flex:none; }
+  .colmenu label span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .filters .apply { align-self:end; display:flex; gap:8px; }
+
+  .note { padding:22px 16px; color:var(--fg-muted); font-size:14.5px; text-align:center; }
+  .err { padding:13px 16px; background:var(--bad-bg); color:var(--bad); font-size:14.5px;
+         border-inline-start:3px solid var(--bad); }
+  .pager { display:flex; gap:9px; align-items:center; padding:11px 16px;
+           border-top:1px solid var(--line-soft); font-size:13.5px; color:var(--fg-muted);
+           flex-wrap:wrap; background:var(--surface-2); }
+  .pager .count { margin-inline-start:auto; font-variant-numeric:tabular-nums; }
+
+  /* The chart sits in its own well, one step above the card, so it reads as a
+     figure rather than as more page. The height is now the height, full stop:
+     see .chartzoom for what replaced the box that grew with its bar count. */
+  .chartwell { padding:16px 8px; border-bottom:1px solid var(--line-soft); }
+
+  /* ---- the chart window ----
+     A chart of many categories used to be given a box as tall as it needed --
+     one row per bar, up to 1400px -- and that is what made these pages
+     impossible to work in: a dozen of them made a page many screens tall.
+     The box is now a fixed-height WINDOW onto a stage that may be
+     taller than it, and the control above it is what makes the stage grow. At
+     the smallest setting the stage is exactly the window: the whole chart is on
+     screen, zoomed out, and no scrollbar appears at all.
+
+     Deliberately not a Chart.js zoom plugin. The policy this application sends
+     is "script-src 'self'" (see securityHeaders in internal/find/server.go), so
+     a plugin cannot be fetched from a CDN -- it would have to be vendored
+     beside Chart.js, and a script tag pointing anywhere else is blocked with
+     nothing on screen to say why. For a bar chart a scrolling window is also
+     the simpler answer: no library, and the wheel, the scrollbar and the arrow
+     keys all work without a line of code. */
+  .chartzoom {
+    overflow-y:auto; overflow-x:hidden;
+    /* Reserved, so stepping the zoom does not shift the plot sideways as the
+       scrollbar appears. */
+    scrollbar-gutter:stable;
+    /* The panel is dark and the platform scrollbar on Windows is not. */
+    scrollbar-width:thin; scrollbar-color:var(--line) transparent;
+  }
+  /* Zoomed in, the scrollbar is always there rather than coming and going --
+     see the note in zoomShell's show(). A bar that appears changes the box
+     width, and that is what the freeze was made of. */
+  .chartzoom.zoomed { overflow-y:scroll; }
+  .chartzoom:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* A percentage, not pixels: the stage then tracks whatever height the
+     stylesheet gives the window at this width, so a media query changing that
+     height cannot leave the stage at a size measured under the other one. */
+  .chartstage { height:100%; }
+
+  .zoombar {
+    display:flex; align-items:center; gap:6px; margin:0 2px 7px;
+    font-size:12px; color:var(--fg-faint);
+  }
+  .zoombar .zoomlab { margin-inline-end:auto; }
+  .zoomb {
+    flex:none; width:26px; height:26px; padding:0; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid var(--line); border-radius:8px;
+    background:var(--surface-2); color:var(--fg);
+    font:inherit; font-size:15px; line-height:1;
+  }
+  .zoomb:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+  .zoomb:disabled { opacity:.38; cursor:default; }
+  .zoomnow { min-width:44px; text-align:center; font-variant-numeric:tabular-nums; }
+
+  /* The caption line above each chart is the one strip of light on a dark
+     page. It carries what the chart is based on -- row count, category count,
+     currency, truncation -- and lifting it out of the dark makes the figure
+     read as a live readout rather than as part of the background. */
+  .chartstat {
+    display:flex; gap:0; flex-wrap:wrap; align-items:stretch;
+    margin-bottom:12px; padding:0; overflow:hidden;
+    border:1px solid rgb(255 255 255 / .1); border-radius:var(--radius);
+    background:linear-gradient(180deg, rgb(255 255 255 / .1), rgb(255 255 255 / .045));
+    box-shadow:inset 0 1px 0 rgb(255 255 255 / .16);
+    font-size:13px; color:#e8edf7;
+  }
+  .chartstat > span {
+    padding:9px 14px; display:inline-flex; align-items:center; gap:6px;
+    border-inline-end:1px solid rgb(255 255 255 / .09);
+  }
+  .chartstat > span:last-child { border-inline-end:0; }
+  .chartstat b { color:#fff; font-weight:650; font-variant-numeric:tabular-nums; }
+  .chartbox { height:340px; position:relative; background:var(--surface-2);
+              border:1px solid var(--line-soft); border-radius:12px; padding:14px 8px 10px; }
+  .chartstat { display:flex; gap:18px; flex-wrap:wrap; padding:0 2px 11px;
+               font-size:13px; color:var(--fg-muted); }
+  .chartstat b { color:var(--fg); font-weight:650; font-variant-numeric:tabular-nums; }
+
+  /* ---- monthly summary banner ----
+     A headline panel, not another chart card: the total is set large enough
+     to be read across a meeting room, the bars sit under it as evidence, and
+     the three supporting figures line up beside the total rather than under
+     the chart where nobody looks. */
+  .banner { position:relative; overflow:hidden; margin:0 0 16px;
+            border-radius:16px; padding:18px 20px 12px; }
+  /* A single warm wash from the leading corner. One light source, so the
+     panel reads as lit rather than as a gradient swatch. */
+  .banner::before {
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(120% 150% at 100% 0%,
+      rgb(229 100 29 / .17) 0%, rgb(229 100 29 / .05) 38%, transparent 68%);
+  }
+  .banner > * { position:relative; }
+  .banner-grid { display:flex; flex-wrap:wrap; align-items:flex-end;
+                 gap:20px 34px; margin-bottom:6px; }
+  .banner-lede { display:flex; flex-direction:column; gap:2px; }
+  .banner-kicker { font-size:13px; font-weight:650; letter-spacing:.09em;
+                   color:var(--accent); text-transform:uppercase; }
+  .banner-figure { font-size:clamp(38px,6vw,54px); font-weight:750; line-height:1.02;
+                   color:#fff; font-variant-numeric:tabular-nums; letter-spacing:-.02em; }
+  .banner-unit { font-size:13.5px; color:var(--fg-muted); }
+  .banner-move { display:flex; align-items:center; gap:8px; margin-top:7px; }
+  .banner-movetext { font-size:13px; color:var(--fg-muted); }
+  .trend { display:inline-flex; align-items:center; gap:5px;
+           padding:3px 10px; border-radius:var(--radius-full);
+           font-size:13.5px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .trend.up   { background:var(--ok-bg);  color:var(--ok); }
+  .trend.down { background:var(--bad-bg); color:var(--bad); }
+  .trend.flat { background:var(--surface-3); color:var(--fg-muted); }
+  .banner-stats { display:flex; gap:10px; flex-wrap:wrap; margin-inline-start:auto; }
+  .bstat { display:flex; flex-direction:column; gap:1px; min-width:104px;
+           padding:9px 14px; border-radius:12px;
+           background:rgb(255 255 255 / .05);
+           border:1px solid rgb(255 255 255 / .07); }
+  .bstat .k { font-size:12px; color:var(--fg-muted); }
+  .bstat .v { font-size:18px; font-weight:680; color:#fff;
+              font-variant-numeric:tabular-nums; }
+  .bstat .s { font-size:12px; color:var(--fg-faint); }
+  .bannerbox { height:210px; position:relative; margin-top:4px; }
+  .banner-foot { margin:8px 2px 0; font-size:12.5px; color:var(--fg-faint); }
+  @media (max-width:720px) {
+    .banner { padding:15px 15px 10px; }
+    .banner-stats { margin-inline-start:0; }
+    .bstat { min-width:88px; padding:8px 11px; }
+    .bannerbox { height:180px; }
+  }
+
+  /* ---- the period comparison ----
+     Three questions with one answer each -- this month against last, against
+     the same month a year ago, and the year so far against the year before --
+     and then the twelve months of both years drawn together.
+
+     Deliberately quieter than the banner above it. The banner states what the
+     report holds; this states how that has moved, which is a second-order
+     fact and should not compete with the first for the eye. No warm wash, a
+     flat surface, and the figures at bstat size rather than banner size.
+
+     Placed immediately after the banner rules on purpose. .cmp-fig sets a
+     colour that .trend would otherwise win on a tie, and a media query adds
+     no specificity -- the ordering trap this file has been bitten by five
+     times. Everything here is a cmp- class of its own so nothing below can
+     reach it by accident. */
+  .cmp { margin:0 0 16px; border-radius:16px; padding:16px 18px 12px; }
+  .cmp-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+              margin-bottom:12px; }
+  .cmp-title { font-size:13px; font-weight:650; letter-spacing:.09em;
+               color:var(--accent); text-transform:uppercase; }
+  .cmp-when { font-size:12.5px; color:var(--fg-faint); }
+  .cmp-row { display:grid; gap:10px; margin-bottom:12px;
+             grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .cmp-card { display:flex; flex-direction:column; gap:3px;
+              padding:11px 14px; border-radius:12px; min-width:0;
+              background:rgb(255 255 255 / .05);
+              border:1px solid rgb(255 255 255 / .07); }
+  .cmp-k { font-size:12px; color:var(--fg-muted); }
+  /* The two figures on one line, the current one carrying the weight: the
+     question is "how much now", and "what it was" is the context for it. */
+  .cmp-fig { display:flex; align-items:baseline; gap:7px; flex-wrap:wrap;
+             font-variant-numeric:tabular-nums; }
+  .cmp-now { font-size:21px; font-weight:700; color:#fff; }
+  .cmp-then { font-size:12.5px; color:var(--fg-faint); }
+  .cmp-note { font-size:12px; color:var(--fg-faint); }
+  .cmp-box { height:230px; position:relative; margin-top:2px; }
+  /* Caveats are the point of this panel as much as the figures are, so they
+     are a list with room around them, not a footnote in grey six-point. */
+  .cmp-cav { margin:10px 2px 0; padding:0; list-style:none;
+             display:flex; flex-direction:column; gap:5px; }
+  .cmp-cav li { font-size:12.5px; line-height:1.65; color:var(--fg-muted);
+                padding-inline-start:16px; position:relative; }
+  .cmp-cav li::before { content:'•'; position:absolute; inset-inline-start:2px;
+                        color:var(--accent); }
+  /* The whole panel when there is nothing to compare. A blank strip reads as
+     a broken feature; a sentence reads as an answer. */
+  .cmp-none { font-size:13.5px; line-height:1.8; color:var(--fg-muted);
+              margin:0; }
+  @media (max-width:720px) {
+    .cmp { padding:14px 14px 10px; }
+    .cmp-row { grid-template-columns:1fr; }
+    .cmp-box { height:200px; }
+  }
+
+  /* ---- report list ----
+     Two grids rather than one, because the tiles are two different sizes of
+     thing. The builder at the top is a whole tool and gets a third of the
+     row. The reports under it are one query apiece and sit four to a row, so
+     each is three quarters of a lead tile, which is what the 0.75 columns
+     say: four columns of 0.75 share the same track space as three of 1.
+     An auto-fill grid would make the count per row depend on the window
+     rather than on what the tile is. */
+  .cards { display:grid; gap:13px; grid-template-columns:repeat(3, 1fr); }
+  .cards-rest { display:grid; gap:13px; margin-top:13px; grid-template-columns:repeat(4, 0.75fr); }
+  /* The heading over a group of reports that declare one («حسابداری»). */
+  .cards-group { margin:26px 2px 0; font-size:15px; font-weight:700; color:var(--fg-muted); }
+  /* A report family's choice, above its filters (familyBar). */
+  .family-bar { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:end; margin:4px 0 14px; }
+  .family-pick { display:grid; gap:4px; font-size:13px; color:var(--fg-muted); }
+  .family-pick .input { min-width:180px; width:auto; }
+  /* A tile stops being readable somewhere under 270px, which is where the
+     old minmax() sat. Four across reaches that at about 1140px and three at
+     about 880, so each step down is taken just before the tiles get too
+     narrow rather than at a round number. */
+  @media (max-width:1140px) {
+    .cards-rest { grid-template-columns:repeat(3, 1fr); }
+  }
+  @media (max-width:880px) {
+    .cards, .cards-rest { grid-template-columns:repeat(2, 1fr); }
+  }
+  @media (max-width:560px) {
+    .cards, .cards.four, .cards-rest { grid-template-columns:minmax(0, 1fr); }
+  }
+  /* A thin brand rule on the leading edge, revealed on hover -- enough of a
+     cue to show the card is a target without repainting the whole tile. */
+  .card-link::before {
+    content:''; position:absolute; inset-block:14px; inset-inline-start:0; width:3px;
+    background:var(--accent); border-radius:0 3px 3px 0; opacity:0; transition:opacity .14s;
+  }
+
+  /* ---- report detail ---- */
+  .crumb { display:flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-muted);
+           flex-wrap:wrap; margin-bottom:12px; }
+  /* .btn-back itself lives in app.css, which this page also loads: the
+     evaluation page carries the same control and two copies would drift. */
+
+  /* Tables.
+     The previous table had horizontal rules only, so a wide Persian report
+     turned into bands of text with nothing separating one column from the
+     next. Vertical rules, a distinctly lighter header, and a sticky first
+     column give the grid an actual structure to read along. */
+  /* Tables come from app.css (.table-scroll + table.data). The copy that
+     used to live here predated the shared sheet and would now override it. */
+  .scroll { overflow:auto; max-height:64vh; overscroll-behavior:contain; }
+
+  /* Skeleton rows while a report runs. A spinner says "wait"; a skeleton says
+     "a table is coming and roughly this big", which makes the wait read as
+     shorter even when it is not. */
+  .skel { padding:16px; display:grid; gap:9px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration:.001ms !important; animation-iteration-count:1 !important;
+        transition-duration:.001ms !important; }
+  }
+
+  @media (max-width: 700px) {
+    main { padding:11px; gap:12px; }
+    header { padding:9px 12px; gap:7px; }
+    header h1 { font-size:16px; }
+    .widget > h2 { font-size:14.5px; padding:11px 13px; }
+    .filters { padding:11px 13px; gap:9px; }
+    .filters > div { flex:1 1 46%; }
+    .filters input { min-width:0; width:100%; }
+    /* The same reasoning as the line above, for the token box: a 170px floor
+       on a control in a 46%-wide column is 12px of sideways scroll at 375px. */
+    .filters .chipfield { min-width:0; width:100%; }
+    .filters .chipfield .chiptype { flex:1 1 60px; width:auto; }
+    .scroll { max-height:none; }
+    .chartwell { padding:11px 5px; }
+    .chartbox { height:260px; padding:10px 5px 6px; }
+    /* Touch targets stay at least 44px on a phone. */
+    .btn { padding:11px 16px; }
+    /* The same rule for the zoom stepper, which is the control this page is
+       most likely to be poked at repeatedly on a phone. */
+    .zoomb { width:44px; height:44px; font-size:17px; }
+    .zoombar { gap:8px; }
+    header a, header button { padding:9px 11px; }
+  }
+
+</style>
+</head>
+<body>
+<!-- First thing in the tab order, visible only once focused: somebody on a
+     keyboard or a screen reader would otherwise walk the whole navigation on
+     every page load before reaching the report they came for. -->
+<a class="skip" href="#main">پرش به محتوای صفحه</a>
+<header class="appbar">
+  <!-- The mark and the visible page name are gone from the header. The
+       heading is not: two views share this document and the script renames
+       it, so it is the only thing that says which one you are on. Said
+       rather than shown -- see .sr-only. -->
+  <h1 id="pageTitle" class="sr-only">گزارش‌ها</h1>
+  <!-- The destinations are built by nav.js, from the same list the phone sheet
+       uses, and it marks the current one from the address. -->
+  <span class="spacer"></span>
+  <span id="who" class="who collapses"></span>
+  <button id="signout" class="collapses" aria-label="خروج از حساب کاربری">خروج</button>
+</header>
+<main id="main"><div class="note">در حال بارگذاری گزارش‌ها…</div></main>
+
+<script src="/nav.js"></script>
+<script src="/datepick.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+// Where the figures came from, when that is worth saying: a saved copy that
+// is due a refresh (one is already running behind it), or one shown because
+// the database cannot be reached. A fresh answer says nothing. The note sits
+// just before `el`, outside it, so re-rendering `el` does not wipe it.
+function noteSource(el, ds) {
+  if (!el || !el.parentNode) return;
+  let n = el.previousElementSibling;
+  if (!n || !n.classList.contains('src-note')) {
+    n = document.createElement('p');
+    n.className = 'src-note';
+    n.setAttribute('role', 'status');
+    n.style.cssText = 'margin:0 0 .5rem;font-size:.85em;opacity:.8';
+    el.parentNode.insertBefore(n, el);
+  }
+  // Every figure says how old it is (freshness.go): live quietly, a saved
+  // copy more visibly -- as a caption, never as an error.
+  n.hidden = !ds || !ds.at;
+  if (n.hidden) return;
+  const at = new Date(ds.at);
+  const today = at.toDateString() === new Date().toDateString();
+  const when = today
+    ? at.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' })
+    : at.toLocaleString('fa-IR', { dateStyle: 'short', timeStyle: 'short' });
+  const state = ds.state || (ds.unreachable ? 'offline' : ds.stale ? 'stale' : 'live');
+  const badge = { live: 'زنده', stale: 'در حال به‌روزرسانی', offline: 'آفلاین' }[state] || state;
+  n.style.opacity = state === 'live' ? '.6' : '.9';
+  n.textContent = '[' + badge + '] داده تا ' + when + ' · ' +
+    (ds.source === 'snapshot' ? 'نسخهٔ ذخیره‌شده' : 'پایگاه داده') +
+    (state === 'offline' ? '؛ پایگاه داده در دسترس نیست' : '');
+}
+
+let catalogue = [];   // every report this user may see
+let unconfigured = false; // no shipped reports on this server at all
+// The chart's category heading, per report, so a click on a bar knows which
+// filter box it corresponds to.
+const chartCategory = {};
+let me = null;
+let chart = null;     // the one chart on screen, if any
+let chartWatch = null;    // pending IntersectionObserver cancel, if chart is not built yet
+let monthlyWatch = null;  // same, for the monthly banner and comparison bars
+const state = {};     // per report: page
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { credentials: 'same-origin', ...opts });
+  if (r.status === 401) {
+    location.replace('/login?next=' + encodeURIComponent(location.pathname));
+    throw new Error('unauthenticated');
+  }
+  return r;
+}
+
+// ------------------------------------------------------------------ charts
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+// Every piece of text drawn onto a canvas is white.
+//
+// Chart.js inherits neither the page font nor its colour, so a chart on a dark
+// surface draws its labels in the library's own near-black unless told
+// otherwise -- and a colour it cannot parse counts as "not told". An undefined
+// custom property resolves to the empty string, an empty string is not a
+// colour, and a canvas handed one keeps whatever fill was set last. That is
+// how the workload chart's labels went black with no error anywhere: the
+// colour was read from --muted, a variable this stylesheet has never defined.
+// The real name is --fg-muted.
+//
+// Naming the colour outright rather than reading a variable removes the class
+// of fault, not just the instance.
+//
+// Taken from nav.js rather than written here, because the PDF export -- which
+// now lives there, so that the builder and the entity page can use it too --
+// restores this exact value after printing. Two copies of a colour that must
+// match is a bug waiting for somebody to change one of them; the fallback is
+// for the case where nav.js has not loaded at all, where nothing is going to
+// be printed anyway.
+const CHART_INK = window.CHART_SCREEN_INK || '#ffffff';
+
+// filterSummary states which filters are set, for the masthead.
+//
+// Only the ones the reader actually set: listing every empty box as "همه"
+// would bury the two that matter in a line of noise.
+function filterSummary(rep) {
+  const out = [];
+  for (const p of (rep.params || [])) {
+    const el = $('f-' + p.name);
+    if (!el) continue;
+    const v = String(el.value || '').trim();
+    if (!v) continue;
+    // A multi-value filter stores its selection newline-separated, which is
+    // one line per value in a masthead that has room for one line in total.
+    out.push((p.label || p.name) + ': ' +
+      (p.kind === 'anyof' ? v.split('\n').map(s => s.trim()).filter(Boolean).join('، ') : v));
+  }
+  return out;
+}
+
+// The glyph on every export button, from nav.js along with the export itself.
+const PDF_ICON = window.PDF_ICON || '';
+
+// crumbBar is the strip at the top of every page below the report list.
+//
+// A link styled as a button rather than a scripted history.back(): "back" from
+// a report means the list of reports, which is where this goes every time.
+// history.back() would mean that only sometimes -- arriving from a bookmark,
+// an emailed link or a reload, it leaves the application altogether, and the
+// one place a reader needs a predictable exit is the page they got lost on.
+//
+// The arrow points the way back in a right-to-left page, which is rightward.
+// Persian digits inside a string that is not a number.
+//
+// faFull.format handles numbers; a Jalali date is "1405/06/25", where the
+// slashes have to survive and only the digits change. Intl cannot be asked for
+// that, and rendering the date with Latin digits beside a page of Persian ones
+// reads as a value from somewhere else.
+const faDigits = s => String(s ?? '').replace(/[0-9]/g, c =>
+  '۰۱۲۳۴۵۶۷۸۹'[+c]);
+
+function crumbBar(here) {
+  return '<div class="crumb">' +
+    '<a class="btn btn-back" href="#">' +
+      '<svg aria-hidden="true"><use href="#i-arrow-right"/></svg>' +
+      '<span>بازگشت به گزارش‌ها</span>' +
+    '</a>' +
+    '<span>/</span><span>' + esc(here) + '</span>' +
+  '</div>';
+}
+
+// cssVarOr refuses to hand back nothing, for the places that do want a
+// variable -- grid lines, surfaces -- where a silent empty string would fail
+// the same way.
+function cssVarOr(n, fallback) { return cssVar(n) || fallback; }
+
+// Chart.js keeps a canvas registered until it is destroyed. Re-rendering
+// without this leaks the instance and leaves the old tooltips firing over the
+// new one.
+function destroyChart() {
+  if (chartWatch) { chartWatch(); chartWatch = null; }
+  if (chart) { chart.destroy(); chart = null; }
+}
+
+// lazyChart defers `create` -- a Chart.js construction -- until `el` scrolls
+// into view, and returns a canceller so navigating away before that happens
+// can drop the watcher instead of leaving it to fire on a page nobody is
+// looking at. A report page with a dozen finding charts used to build every
+// one of them the instant its data arrived, whether or not the reader ever
+// scrolled that far; see the note above drawFindingCharts. Browsers without
+// IntersectionObserver -- none left worth naming -- just get it built now.
+function lazyChart(el, create) {
+  if (!el || typeof IntersectionObserver !== 'function') { create(); return null; }
+  const io = new IntersectionObserver(entries => {
+    if (!entries.some(e => e.isIntersecting)) return;
+    io.disconnect();
+    create();
+  }, { rootMargin: '200px 0px' });
+  io.observe(el);
+  return () => io.disconnect();
+}
+
+// dropWatch cancels the pending watchers for section `only`, or every one
+// when no section is named, and returns what is left -- the same convention
+// dropCharts uses below for charts already built.
+function dropWatch(list, only) {
+  const keep = [];
+  for (const w of list) {
+    if (only !== undefined && w.sec !== only) { keep.push(w); continue; }
+    w.cancel();
+  }
+  return keep;
+}
+
+// Number formatting, shared by axes, tooltips and value labels so the same
+// figure never appears two ways on one screen.
+//
+// Persian digits because the rest of these reports are Persian. Abbreviated
+// only from ten thousand up, and only on axis ticks -- a tooltip is where
+// somebody reads the actual number, so it always shows it in full.
+const faFull = new Intl.NumberFormat('fa-IR');
+const faCompact = new Intl.NumberFormat('fa-IR', { notation: 'compact', maximumFractionDigits: 1 });
+const fmtFull = v => (Number.isFinite(v) ? faFull.format(v) : '—');
+const fmtAxis = v => {
+  if (!Number.isFinite(v)) return '';
+  return Math.abs(v) >= 10000 ? faCompact.format(v) : faFull.format(v);
+};
+
+// Honoured for animation, per prefers-reduced-motion.
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const PALETTE = () => ['--c1','--c2','--c3','--c4','--c5','--c6','--c7','--c8'].map(cssVar);
+
+// A vertical gradient per bar.
+//
+// Chart.js takes a CanvasGradient wherever it takes a colour, but a gradient
+// is tied to pixel coordinates, so it has to be built once the chart area
+// exists -- hence the guard: on the very first layout pass there is no area
+// yet and the flat colour stands in until the next.
+function barFill(ctx, colour, horizontal) {
+  const area = ctx.chart.chartArea;
+  if (!area) return colour;
+  // Runs from each bar's own origin to its tip, so the saturated end is the
+  // end that carries the value. Horizontal bars grow right-to-left here (the
+  // value axis is reversed for Persian), so the gradient starts on the right.
+  const g = horizontal
+    ? ctx.chart.ctx.createLinearGradient(area.right, 0, area.left, 0)
+    : ctx.chart.ctx.createLinearGradient(0, area.bottom, 0, area.top);
+  g.addColorStop(0, colour + '55');
+  g.addColorStop(1, colour);
+  return g;
+}
+
+// Shared Chart.js configuration.
+//
+// One factory rather than a config per report, so every chart in the app gets
+// the same typography, grid weight, tooltip and RTL handling instead of eight
+// slightly different ones.
+// wrapLabel breaks a category name across lines for a chart axis.
+//
+// Chart.js renders an array of strings as one line each, which is how a long
+// name is shown in full on a narrow chart without either shrinking the type
+// to nothing or taking half the plot for the axis.
+//
+// Broken on spaces, because Persian is cursive and splitting inside a word
+// breaks the joins between letters -- the word would be drawn with the wrong
+// letter forms. A single word longer than the line budget is therefore left
+// whole rather than cut: better one wide row than one misspelt one. The last
+// line carries an ellipsis only if lines actually had to be dropped.
+function wrapLabel(text, perLine, maxLines) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    const next = cur ? cur + ' ' + w : w;
+    if (next.length <= perLine || !cur) {
+      cur = next;
+    } else {
+      lines.push(cur);
+      cur = w;
+      if (lines.length === maxLines) break;
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  // Anything that did not fit is reported by the last line rather than
+  // silently missing.
+  const used = lines.join(' ').length;
+  if (used < text.replace(/\s+/g, ' ').length) {
+    lines[lines.length - 1] += '…';
+  }
+  return lines;
+}
+
+// axisLines says how many lines one category label may take.
+//
+// The wrapping itself is unchanged and still tuned by the measurements written
+// up on wrapLabel and on the tick callbacks. What is new is that the room is no
+// longer unlimited: a chart is now fitted into a window of a fixed height (see
+// .chartzoom), so each row gets the pixels it gets, and three wrapped lines of
+// 13px type need about fifty of them. On a fourteen-category chart at the
+// smallest zoom that is nineteen pixels a row, where three lines would draw
+// over each other and read as a smear.
+//
+// So this spends the room that exists: three lines where there is room for
+// three, one line with wrapLabel's ellipsis where there is room for one, and
+// the zoom control is what buys more. A name elided at the smallest size is a
+// name the reader can still read by stepping the zoom once, which is a better
+// trade than a chart nobody can scroll past.
+//
+// Measured from chart.height rather than from chartArea, which is not final
+// while the scales are being fitted -- and a tick callback runs during exactly
+// that pass. 40px is the allowance for the value axis and the layout padding.
+function axisLines(chart, count) {
+  if (!chart || !count) return 3;
+  const plot = (chart.height || 0) - 40;
+  if (plot <= 0) return 3;
+  return Math.max(1, Math.min(3, Math.floor((plot / count) / 17)));
+}
+
+function chartConfig(cd, horizontal, isPie) {
+  const palette = PALETTE();
+  // Both white: see CHART_INK. `muted` used to read a variable that does not
+  // exist, which is what made these labels black.
+  const fg = CHART_INK, muted = CHART_INK;
+  const line = cssVarOr('--line-soft', '#222f4d'), surface = cssVarOr('--surface', '#131c31');
+  const valueName = cd.value || 'مقدار';
+
+  // Is there enough chart to put a legend beside it, or names of any length
+  // down one edge? Read from the viewport because legend position is not a
+  // scriptable option and has to be decided now; on a phone the chart is
+  // within a few pixels of the screen's width, so this is a fair stand-in.
+  const narrowChart = window.innerWidth < 520;
+
+  // Axes are mirrored for Persian.
+  //
+  // Chart.js has no page-level RTL for scales: `locale` only formats numbers,
+  // and the plugins' `rtl` flag only covers the legend and tooltip. Left as
+  // shipped, a horizontal bar chart puts zero on the left and grows rightward
+  // with the names down the left edge -- the reverse of how these reports are
+  // read. Reversing the value axis and moving the category axis to the right
+  // is what actually mirrors the plot.
+  const catAxis = {
+    position: 'right',
+    reverse: !horizontal,              // vertical bars: first category on the right
+    ticks: {
+      color: muted, padding: 6,
+      // Sized from the chart rather than fixed.
+      //
+      // Measured on a 390px phone: a category axis of 28-character names took
+      // about 200px of the 360 available, so the bars were drawn into 150px
+      // and their figures were unreadable without pinching out -- which is
+      // exactly the complaint. Both the type size and the name budget are a
+      // function of how much chart there is.
+      font: ctx => ({ size: ctx.chart && ctx.chart.width < 520 ? 11 : 13 }),
+      // Horizontal bars give each label a whole row, so they need no
+      // rotation.
+      autoSkip: !horizontal,
+      maxRotation: horizontal ? 0 : 34,
+      // Wrapped, not cut.
+      //
+      // This truncated to 16 characters on a narrow chart, which stopped the
+      // overflow by making the names unreadable -- "واحد فروش - نام و
+      // نام خانوادگی" became "واحد فروش - ن…", and the report exists to tell those
+      // people apart. Chart.js draws an array of strings as separate lines,
+      // so the full name fits in the same width by using more rows instead of
+      // fewer characters.
+      //
+      // There was also a hard ceiling on the axis width here. It has gone: it
+      // did not make anything fit, it only took space away from the labels and
+      // let Chart.js draw them past the edge of the canvas, which is the
+      // clipping visible in the photographs.
+      callback(v) {
+        const raw = String(this.getLabelForValue(v));
+        if (!horizontal) return raw;
+        const perLine = this.chart && this.chart.width < 520 ? 18 : 30;
+        if (raw.length <= perLine) return raw;
+        // As many lines as this row has room for -- see axisLines.
+        return wrapLabel(raw, perLine,
+          axisLines(this.chart, (this.chart.data.labels || []).length));
+      },
+    },
+    grid: { display: false },
+    border: { display: false },
+  };
+  const valAxis = {
+    beginAtZero: true,                 // a bar chart with a cut baseline lies
+    reverse: horizontal,               // horizontal bars grow right-to-left
+    position: horizontal ? 'bottom' : 'right',
+    ticks: { color: muted, font: { size: 12.5 }, padding: 8, precision: 0, callback: fmtAxis },
+    // Dashed and faint: the grid is a reading aid, not part of the data.
+    grid: { color: line, lineWidth: 1, drawTicks: false, borderDash: [3, 4] },
+    border: { display: false },
+  };
+
+  // See the note on `interaction` below for why the axis is set explicitly.
+  const hoverMode = isPie
+    ? { mode: 'nearest', axis: 'xy', intersect: true }
+    : { mode: 'index', axis: horizontal ? 'y' : 'x', intersect: false };
+
+  // A broken-down chart: one bar per stack value for each label, each bar
+  // split by series in its own colour.
+  //
+  // The colour follows the series name, not the dataset's position, so the
+  // same order type is the same colour in every status -- which is the whole
+  // point of the breakdown. Chart.js decides what stacks with what purely
+  // from the `stack` string, so setting it is what turns six datasets into
+  // three bars of two rather than one bar of six.
+  const broken = !isPie && Array.isArray(cd.series) && cd.series.length > 0;
+  let datasets;
+  if (broken) {
+    const names = [];
+    for (const s of cd.series) if (!names.includes(s.name)) names.push(s.name);
+    datasets = cd.series.map(s => {
+      const colour = palette[names.indexOf(s.name) % palette.length];
+      return {
+        label: s.name,
+        stack: s.stack || 'all',
+        data: s.values,
+        backgroundColor: colour,
+        hoverBackgroundColor: colour,
+        hoverBorderColor: '#fff',
+        hoverBorderWidth: 2,
+        borderColor: 'transparent',
+        borderWidth: 0,
+        borderRadius: 4,
+        borderSkipped: false,
+        maxBarThickness: horizontal ? 18 : 34,
+      };
+    });
+  } else {
+    datasets = null;
+  }
+
+  return {
+    type: cd.chart === 'line' ? 'line' : (isPie ? cd.chart : 'bar'),
+    data: {
+      labels: cd.labels,
+      datasets: datasets || [{
+        label: valueName,
+        data: cd.values,
+        backgroundColor: isPie
+          ? cd.labels.map((_, i) => palette[i % palette.length])
+          : ctx => barFill(ctx, palette[0], horizontal),
+        hoverBackgroundColor: isPie ? undefined : palette[1],
+        hoverBorderColor: isPie ? undefined : '#fff',
+        hoverBorderWidth: isPie ? 3 : 2,
+        borderColor: cd.chart === 'line' ? palette[0] : (isPie ? surface : 'transparent'),
+        borderWidth: cd.chart === 'line' ? 2.5 : (isPie ? 3 : 0),
+        borderRadius: isPie ? 0 : 6,
+        borderSkipped: false,           // round both ends, not just the top
+        maxBarThickness: horizontal ? 24 : 52,
+        // A doughnut, not a pie: the hole gives the centre label a home and
+        // makes the arcs easier to compare than wedges meeting at a point.
+        cutout: isPie ? '62%' : undefined,
+        hoverOffset: isPie ? 6 : 0,
+        pointRadius: cd.chart === 'line' ? 3 : undefined,
+        pointHoverRadius: cd.chart === 'line' ? 6 : undefined,
+        tension: cd.chart === 'line' ? 0.25 : 0,   // gentle, not distorting
+        fill: false,
+        spanGaps: true,                            // a null must not break the line
+      }],
+    },
+    options: {
+      indexAxis: horizontal ? 'y' : 'x',
+      responsive: true,
+      maintainAspectRatio: false,
+      resizeDelay: 120,                 // coalesce resize storms
+      animation: reduceMotion ? false : { duration: 420, easing: 'easeOutQuart' },
+      layout: { padding: { top: 6, right: 10, bottom: 0, left: 6 } },
+      // Hover must resolve to the bar the pointer is level with, anywhere
+      // along it. Two Chart.js details make the obvious settings wrong here.
+      //
+      // `index` mode reads `options.axis || 'x'` -- it does NOT derive the
+      // axis from indexAxis -- so on a horizontal bar chart it matched by
+      // column when it needed to match by row. And `nearest` ranks by
+      // distance to each element's *centre*, which on a long bar sits far
+      // along its length: pointing near the start of the longest bar picked
+      // whichever short bar happened to have its centre closer.
+      //
+      // Matching on the category axis alone, with no intersect requirement,
+      // makes the entire row a hover target. Arcs are the exception: they
+      // have no category axis, so there the pointer must be inside the slice.
+      interaction: hoverMode, hover: hoverMode,
+      plugins: {
+        legend: {
+          // A single-series bar chart needs no legend; the axis names it. A
+          // broken-down one does: the colours are the only thing saying which
+          // slice is which.
+          display: isPie || broken,
+          // Above the chart where it cannot sit beside it, and beside it on a
+          // desktop doughnut.
+          //
+          // Legend position is not a scriptable option, so this is decided
+          // from the viewport at config time -- on a phone the chart is
+          // essentially the screen's width, so that is a fair proxy.
+          // Measured on a 390px iPhone: a doughnut legend at 'right' had
+          // about 150px for three names like "درخواست‌های در انتظار تأیید" and
+          // clipped all three mid-word, which read as the caption
+          // disappearing under the chart. Given the full width each entry
+          // wraps instead, and it is placed above rather than below so the
+          // key is read before the thing it explains.
+          position: (isPie && narrowChart) ? 'top' : (broken ? 'top' : 'right'),
+          rtl: true, textDirection: 'rtl',
+          labels: {
+            color: CHART_INK, boxWidth: 10, boxHeight: 10,
+            padding: narrowChart ? 9 : 13,
+            usePointStyle: true, pointStyle: 'circle',
+            font: { size: narrowChart ? 11.5 : 13 },
+            // One entry per colour, not per dataset. The same order type
+            // appears once in every status, so the legend would otherwise
+            // repeat "مناقصه / استعلام" three times over.
+            filter: broken
+              ? (item, data) => data.datasets.findIndex(d => d.label === item.text) === item.datasetIndex
+              : undefined,
+          },
+          // Clicking a legend entry hides that colour everywhere rather than
+          // in one stack, which is what a reader means by it.
+          onClick: broken ? (_e, item, legend) => {
+            const ch = legend.chart;
+            ch.data.datasets.forEach((d, i) => {
+              if (d.label === item.text) ch.setDatasetVisibility(i, !ch.isDatasetVisible(i));
+            });
+            ch.update();
+          } : undefined,
+        },
+        tooltip: {
+          // rtl and textDirection are the parts that actually matter for
+          // Persian; `locale` only affects number formatting.
+          rtl: true, textDirection: 'rtl',
+          backgroundColor: 'rgba(8,13,26,.95)',
+          borderColor: cssVar('--line'), borderWidth: 1,
+          titleColor: fg, bodyColor: fg,
+          padding: { x: 13, y: 10 }, cornerRadius: 10, displayColors: !!isPie,
+          usePointStyle: true, boxPadding: 5,
+          titleFont: { size: 12.5, weight: '600' },
+          bodyFont: { size: 13.5 },
+          callbacks: {
+            title: items => items.length ? String(items[0].label) : '',
+            // Two lines rather than one with a parenthetical.
+            //
+            // Brackets are bidi-neutral characters: sitting between Persian
+            // text and Persian digits, neither of which is strongly
+            // right-to-left, their position is resolved from context and the
+            // canvas put them in the wrong place -- the pair rendered
+            // mirrored or split apart. Giving the share its own line removes
+            // the ambiguity entirely, and reads better besides.
+            label(ctx) {
+              const raw = isPie ? ctx.parsed : ctx.parsed[horizontal ? 'x' : 'y'];
+              // On a broken-down chart the useful line names the slice, not
+              // the value column: "در دست اقدام · مناقصه" says which of the
+              // three bars is under the pointer, which the value alone does
+              // not.
+              if (broken) {
+                const st = ctx.dataset.stack && ctx.dataset.stack !== 'all'
+                  ? ctx.dataset.stack + ' · ' : '';
+                return [`${st}${ctx.dataset.label}: ${fmtFull(raw)}`];
+              }
+              const lines = [`${valueName}: ${fmtFull(raw)}`];
+              const total = ctx.dataset.data.reduce((s, n) => s + (Number(n) || 0), 0);
+              // A share only means something where the parts make a whole.
+              if (isPie && total) {
+                lines.push(`سهم: ${faFull.format(Math.round((raw / total) * 100))}٪`);
+              }
+              return lines;
+            },
+          },
+        },
+      },
+      // Both axes are told to stack, not just the value one: Chart.js only
+      // groups bars that share a `stack` string when the category axis is
+      // stacked too, and without it the six datasets draw six thin bars side
+      // by side instead of three split ones.
+      scales: isPie ? {} : (horizontal
+        ? { y: { ...catAxis, stacked: broken }, x: { ...valAxis, stacked: broken } }
+        : { x: { ...catAxis, stacked: broken }, y: { ...valAxis, stacked: broken } }),
+    },
+  };
+}
+
+// Writes the total into the middle of a doughnut.
+//
+// Registered as a plugin rather than drawn afterwards so it survives resizes,
+// animation frames and tooltip redraws, all of which repaint the canvas.
+const centreTotal = {
+  id: 'centreTotal',
+  afterDatasetsDraw(c, _args, opts) {
+    if (!opts || !opts.display) return;
+    const { ctx, chartArea: a } = c;
+    if (!a) return;
+    const total = c.data.datasets[0].data.reduce((s, n) => s + (Number(n) || 0), 0);
+    const cx = (a.left + a.right) / 2, cy = (a.top + a.bottom) / 2;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = opts.fg;
+    ctx.font = '600 22px "Segoe UI",Tahoma,sans-serif';
+    ctx.fillText(fmtFull(total), cx, cy - 8);
+    ctx.fillStyle = opts.muted;
+    ctx.font = '400 12px "Segoe UI",Tahoma,sans-serif';
+    ctx.fillText(opts.caption || 'مجموع', cx, cy + 14);
+    ctx.restore();
+  },
+};
+// Chart.js is fetched the first time a chart is actually drawn.
+//
+// 205 KB -- 70 KB gzipped -- on a page whose landing view is a list of report
+// cards with no chart on it at all. Deferring it takes that off the critical
+// path of every visit, and the report the person then opens fetches it while
+// its own data is still in flight.
+// Interactions, corrected for the reader's type zoom.
+//
+// The size preference is applied as `html { zoom }`, and under any zoom but 1
+// Chrome reports a mouse event's offsetX/offsetY multiplied by that zoom while
+// Chart.js divides them by the canvas's unzoomed CSS width. The two do not
+// cancel, so every interaction lands the zoom factor away from the pointer.
+//
+// Measured on انبار at a 105% setting: a click at chart x=717 arrived as
+// x=753, which is 5% further out -- past the edge of the slice, so
+// getElementsAtEventForMode found nothing and the click did nothing. Wide
+// horizontal bars mostly absorbed the error, which is why this looked like a
+// fault in some reports and not others. It affected tooltips and hover
+// highlighting equally; those simply pointed at a neighbour instead of at
+// nothing, so nobody reported them.
+//
+// beforeEvent is the documented hook that sees the event after Chart.js has
+// resolved it to chart coordinates and before anything uses them, so one
+// correction here fixes clicking, hovering and tooltips together. It is a
+// no-op at zoom 1, which is every reader who has not changed the setting.
+//
+// The factor is measured from the canvas rather than read from the zoom
+// property, so it stays right whatever puts a scale on the page.
+// Canvas size, corrected for the reader's type zoom.
+//
+// The other half of the same fault zoomHit corrects. Chart.js takes the space
+// available to it from container.getBoundingClientRect(), which under
+// `html { zoom }` is in zoomed pixels, and then writes that number back as the
+// canvas's CSS width -- so the canvas comes out the zoom factor too wide.
+//
+// Measured on a page of charts at a 105% setting: 1474 CSS px of canvas in a
+// 1404 px card, 70 px over. The right-hand axis labels were drawn outside the
+// card and the whole page scrolled sideways. A window resize does not correct
+// it -- that path measures the same way -- but an explicit resize to the
+// container's own clientWidth does, exactly.
+//
+// So that is what this does, once, after the first render, and only when
+// Chart.js has chosen something wider than the box. clientWidth is in CSS
+// pixels whatever the zoom, which is what makes it the right number to trust.
+// One correction per measured width, and never a second.
+//
+// This hook used to be able to fight the scrollbar, and the fight froze the
+// tab. The sequence, which is exactly what "the chart zoom does not work"
+// turned out to be:
+//
+//   1. the reader presses +, the stage grows taller than the window;
+//   2. a vertical scrollbar appears, so the window's clientWidth drops by its
+//      width -- about 15px;
+//   3. this hook sees a canvas wider than the box and resizes it down;
+//   4. the narrower content no longer needs a scrollbar, so it goes, and
+//      clientWidth goes back up;
+//   5. the canvas is now narrower than the box, the next render measures the
+//      wider box, and step 2 happens again.
+//
+// Each step scheduled the next through requestAnimationFrame, so it ran at
+// screen refresh rate for ever with no way out. Reproduced in the browser:
+// clicking + made the renderer stop answering, and the page had to be killed.
+//
+// scrollbar-gutter:stable on .chartzoom is meant to prevent step 2 by
+// reserving the gutter permanently, and where it is honoured this never
+// arose -- which is why the fault was invisible until somebody pressed the
+// control on a build where it was not.
+//
+// So the loop is removed rather than the trigger patched, in two parts.
+//
+// The memo skips a width already corrected to, which is what stops the common
+// case doing any work at all. On its own it is NOT enough: an oscillation
+// between two widths A and B defeats a single remembered value, because each
+// one differs from the last and the ping-pong continues. Worth stating,
+// because "remember the last size" is the obvious fix and it does not hold.
+//
+// So the guarantee comes from the counter. A handful of corrections is all any
+// honest layout needs -- one is the normal number -- and past that the hook
+// stops for the life of the chart instance. A chart left a few pixels narrower
+// than its box is a cosmetic flaw; a frozen tab is not, and this is the only
+// version of the check that cannot loop whatever the cause.
+const ZOOM_SIZE_MAX_FIXES = 3;
+
+const zoomSize = {
+  id: 'zoomSize',
+  afterRender(chart) {
+    const cv = chart.canvas, host = cv.parentElement;
+    if (!host || chart.$sizing) return;
+    if ((chart.$fixes || 0) >= ZOOM_SIZE_MAX_FIXES) return;
+    const cs = getComputedStyle(host);
+    const w = host.clientWidth -
+      (parseFloat(cs.paddingInlineStart) || 0) - (parseFloat(cs.paddingInlineEnd) || 0);
+    const h = host.clientHeight -
+      (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
+    const got = parseFloat(cv.style.width) || 0;
+    // A pixel of slack, because both sides are fractional.
+    if (!(w > 0 && h > 0 && got > w + 1)) return;
+    // Rounded, because a fractional box would otherwise read as a new width
+    // on every pass and defeat the check.
+    const key = Math.round(w);
+    if (chart.$fixedTo === key) return;
+    chart.$fixedTo = key;
+    chart.$fixes = (chart.$fixes || 0) + 1;
+    chart.$sizing = true;
+    // Out of the render pass: resize() draws again, and doing that from
+    // inside afterRender would re-enter this hook.
+    requestAnimationFrame(() => {
+      chart.$sizing = false;
+      // Guard the instance having been destroyed while the frame was pending
+      // -- switching report tears every chart down.
+      if (chart.canvas) chart.resize(w, h);
+    });
+  },
+};
+
+const zoomHit = {
+  id: 'zoomHit',
+  beforeEvent(chart, args) {
+    const cv = chart.canvas;
+    const css = parseFloat(cv.style.width);
+    if (!css) return;
+    const z = cv.getBoundingClientRect().width / css;
+    // Within a rounding error of 1: nothing to correct, and dividing would
+    // only introduce drift.
+    if (!(z > 1.002 || z < 0.998)) return;
+    const e = args.event;
+    if (e && typeof e.x === 'number' && typeof e.y === 'number') {
+      e.x /= z;
+      e.y /= z;
+    }
+  },
+};
+
+let chartLibReady = null;
+function loadChartLib() {
+  if (chartLibReady) return chartLibReady;
+  chartLibReady = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = '/vendor/chart.umd.min.js';
+    el.onload = () => {
+      Chart.register(centreTotal);
+      Chart.register(zoomHit);
+      Chart.register(zoomSize);
+      // Chart.js ships its own default family ('Helvetica Neue', Helvetica,
+      // Arial) and never inherits the canvas's font, so every Persian label
+      // on this page was being drawn in a Latin face. That is not merely ugly:
+      // Arial does not mirror bracket pairs in a right-to-left run, so
+      // «شرایط بیرونی (جنگ، تحریم، تعطیلی)» came out with its parentheses
+      // swapped while the identical string in a paragraph beside it was
+      // correct. Handing Chart.js the page stack fixes every chart at once --
+      // axis ticks, legends and tooltips.
+      Chart.defaults.font.family =
+        (cssVar('--font') || getComputedStyle(document.body).fontFamily)
+          .replace(/\s+/g, ' ');
+
+      // Chart.js also ships its own default text colour, #666, which it does
+      // not inherit from the canvas any more than it inherits the font. On
+      // this dark ground that is near-black against near-black: axis ticks,
+      // legends and tooltip labels were all but unreadable. The page's own
+      // muted tone is used instead, with the grid lines pulled to the same
+      // line colour the tables use so a chart sits in the design rather than
+      // beside it.
+      Chart.defaults.color = '#ffffff';
+      Chart.defaults.borderColor = cssVar('--line-soft') || '#222f4d';
+      Chart.defaults.plugins.legend.labels.color = '#ffffff';
+      Chart.defaults.plugins.title.color = '#ffffff';
+      Chart.defaults.scale.ticks.color = '#ffffff';
+      Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
+      Chart.defaults.plugins.tooltip.bodyColor = '#ffffff';
+      Chart.defaults.plugins.tooltip.backgroundColor = cssVar('--surface-3') || '#22304f';
+      Chart.defaults.plugins.tooltip.borderColor = cssVar('--line') || '#33436b';
+      Chart.defaults.plugins.tooltip.borderWidth = 1;
+      resolve();
+    };
+    el.onerror = () => reject(new Error('chart library did not load'));
+    document.head.appendChild(el);
+  });
+  chartLibReady.catch(() => { chartLibReady = null; });
+  return chartLibReady;
+}
+
+// ------------------------------------------------------------- chart zoom
+//
+// Every chart on a report page and under every finding is drawn into a window
+// of a fixed height, starting at the size that fits the whole thing, with a
+// control that steps it up to four times that inside the same window.
+//
+// This replaces boxes that grew with their contents, 15px a bar up to 1400px.
+// A page of those ran to many screens, and a chart you cannot see the top and
+// bottom of at once is a chart you compare against your memory rather than
+// against itself.
+// Four times 320 is 1280, so the room the old heights gave is still reachable;
+// it is now reached inside the window rather than by pushing the page down.
+//
+// Why no zoom plugin: internal/find/server.go sends "script-src 'self'", so
+// chartjs-plugin-zoom could not be fetched from a CDN -- it would have to be
+// vendored beside Chart.js, and a script tag pointing anywhere else is blocked
+// silently. A scrolling window needs no library at all and gets the wheel, the
+// scrollbar and the arrow keys for nothing. It also cannot break the hit
+// testing: a transformed canvas would put Chart.js's idea of where the pointer
+// is out of step with the browser's, which is the fault zoomHit exists to
+// correct and not one worth reintroducing on purpose.
+const CHART_ZOOM_STEPS = [1, 1.5, 2, 3, 4];
+
+// Remembered per chart, so re-running a report does not throw away the size
+// the reader chose.
+const chartZoomAt = new Map();
+
+// zoomShell turns a chart box into that window and puts the control above it.
+//
+// Called BEFORE the Chart is constructed, because Chart.js measures the
+// canvas's parent once at construction and writes that size onto the canvas --
+// so the stage has to exist, and be sized, first.
+function zoomShell(canvas, key) {
+  const win = canvas && canvas.parentElement;
+  // Already wrapped: drawing twice onto markup that was not rebuilt would
+  // otherwise nest a stage inside a stage and the chart would measure the
+  // wrong box.
+  if (!win || win.classList.contains('chartzoom')) return;
+  const id = key || canvas.id || canvas.getAttribute('data-fchart') || '';
+
+  const stage = document.createElement('div');
+  stage.className = 'chartstage';
+  win.insertBefore(stage, canvas);
+  stage.appendChild(canvas);
+  win.classList.add('chartzoom');
+
+  const bar = document.createElement('div');
+  bar.className = 'zoombar';
+  bar.innerHTML =
+    '<span class="zoomlab">بزرگ‌نمایی</span>' +
+    '<button type="button" class="zoomb" data-z="-1" aria-label="کوچک‌تر">−</button>' +
+    '<span class="zoomnow" role="status" aria-live="polite"></span>' +
+    '<button type="button" class="zoomb" data-z="1" aria-label="بزرگ‌تر">+</button>';
+  if (win.parentElement) win.parentElement.insertBefore(bar, win);
+
+  const step = () => Math.max(0,
+    Math.min(CHART_ZOOM_STEPS.length - 1, chartZoomAt.get(id) || 0));
+
+  const show = () => {
+    const i = step(), z = CHART_ZOOM_STEPS[i];
+    stage.style.height = (z * 100) + '%';
+    // Reserve the scrollbar while there is something to scroll, and only
+    // then. This is the other half of the freeze zoomSize describes: a
+    // scrollbar appearing narrows the box, which invited a correction, which
+    // removed the scrollbar. Holding the gutter open for as long as the stage
+    // is taller than the window means the width simply does not change.
+    // scrollbar-gutter:stable in the stylesheet says the same thing to a
+    // browser that honours it; this says it to one that does not, and at the
+    // smallest step there is no bar either way.
+    win.classList.toggle('zoomed', i > 0);
+    const now = bar.querySelector('.zoomnow');
+    if (now) now.textContent = faFull.format(Math.round(z * 100)) + '٪';
+    bar.querySelectorAll('.zoomb').forEach(b => {
+      b.disabled = +b.dataset.z < 0 ? i === 0 : i === CHART_ZOOM_STEPS.length - 1;
+    });
+    // At the smallest size there is nothing to scroll, so the window is not a
+    // tab stop: a page of charts would otherwise put one empty stop per chart
+    // in a keyboard reader's way. Above it, it is one -- the arrow keys are how
+    // somebody without a pointer reaches the rest of a zoomed chart.
+    if (i > 0) {
+      win.setAttribute('tabindex', '0');
+      win.setAttribute('role', 'group');
+      win.setAttribute('aria-label', 'نمودار بزرگ‌شده؛ با کلیدهای جهت‌دار جابه‌جا شوید');
+    } else {
+      win.removeAttribute('tabindex');
+      win.removeAttribute('role');
+      win.removeAttribute('aria-label');
+      win.scrollTop = 0;
+    }
+    // Out of this frame, because the stage has only just changed size and
+    // Chart.js reads the container when it resizes. Nothing to resize on the
+    // first call, which runs before the chart exists -- which is the point.
+    requestAnimationFrame(() => {
+      const ch = window.Chart && Chart.getChart ? Chart.getChart(canvas) : null;
+      if (ch) { try { ch.resize(); } catch (_) {} }
+    });
+  };
+
+  bar.addEventListener('click', e => {
+    const b = e.target.closest('.zoomb');
+    if (!b) return;
+    // Clamped on the way in as well as on the way out, so holding a disabled
+    // end down cannot bank presses that then have to be undone one by one.
+    chartZoomAt.set(id, Math.max(0,
+      Math.min(CHART_ZOOM_STEPS.length - 1, step() + (+b.dataset.z))));
+    show();
+  });
+  show();
+}
+
+// drawChart renders the aggregate the server computed for this report.
+//
+// `cd` is /api/reports/chart's response: labels and values already totalled
+// over the whole filtered result, not over the page on screen.
+function drawChart(cd) {
+  const box = document.querySelector('.chartbox');
+  const canvas = $('chart');
+  if (!box || !canvas || !cd.labels || !cd.labels.length) return false;
+
+  const isPie = cd.chart === 'pie' || cd.chart === 'doughnut';
+  // Long category labels read far better as horizontal bars than as rotated
+  // text, and Persian names are long.
+  const longest = cd.labels.reduce((m, l) => Math.max(m, l.length), 0);
+  const horizontal = !isPie && cd.chart !== 'line' && (longest > 14 || cd.labels.length > 8);
+
+  if (horizontal) {
+    // Give every bar room instead of squeezing twenty into a fixed height.
+    box.style.height = Math.min(640, Math.max(230, cd.labels.length * 32 + 76)) + 'px';
+  }
+
+  destroyChart();
+  const cfg = chartConfig(cd, horizontal, isPie);
+
+  // Clicking a bar filters this report by that label.
+  //
+  // The chart is already the answer to "who has the most"; the next question
+  // is always "which ones" -- and making people retype a name they can see on
+  // screen is the friction worth removing.
+  cfg.options.onClick = (evt, els) => {
+    if (!els || !els.length) return;
+    const label = cd.labels[els[0].index];
+    if (label && typeof window.filterByChartLabel === 'function') {
+      window.filterByChartLabel(label);
+    }
+  };
+  cfg.options.onHover = (evt, els) => {
+    evt.native.target.style.cursor = els && els.length ? 'pointer' : 'default';
+  };
+  if (isPie) {
+    cfg.options.plugins.centreTotal = {
+      display: true, fg: CHART_INK, muted: CHART_INK, caption: cd.value || 'مجموع',
+    };
+  }
+  // Built once the box is actually on screen, not the instant the data
+  // arrives -- a filter change can redraw this while the reader is still
+  // scrolled down at the table. Deferred as a whole, zoomShell included:
+  // Chart.js measures the canvas's parent once at construction and writes
+  // that size onto the canvas, so the stage still has to exist and be sized
+  // first, only later than before.
+  chartWatch = lazyChart(box, () => {
+    chartWatch = null;
+    zoomShell(canvas, 'report:' + (cd.id || ''));
+    chart = new Chart(canvas, cfg);
+
+    // A canvas is opaque to assistive technology, so state the same thing in
+    // words: what it plots, over how much, and the largest value.
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label',
+      `${cd.label} در برابر ${cd.value}. ` +
+      `${faFull.format(cd.groups)} دسته از ${faFull.format(cd.rows)} ردیف. ` +
+      `بیشترین: ${cd.labels[0]} با ${fmtFull(cd.values[0])}.`);
+  });
+  return true;
+}
+
+// The automatic findings beneath the chart.
+//
+// The server computes these from the same aggregate the chart draws, so they
+// describe exactly what is on screen. Levels are shown as much by shape as by
+// colour -- a border and a label, not a hue alone -- because a reader who
+// cannot separate amber from grey still has to be able to tell "worth acting
+// on" from "for information".
+const INSIGHT_ICON = {
+  concentration: '◉', outlier: '△', spread: '⋯', gap: '◑', scale: '⊟', quality: '⚠', info: 'ⓘ',
+};
+const LEVEL_LABEL = { act: 'نیازمند بررسی', watch: 'قابل توجه', info: '' };
+
+function insightsHTML(cd) {
+  const list = cd.insights || [];
+  if (!list.length) return '';
+  return '<section class="insights" aria-label="تحلیل">' +
+    '<h3 class="insights-head">تحلیل خودکار</h3>' +
+    list.map(i =>
+      `<div class="insight ${esc(i.level)}">` +
+        `<span class="ic" aria-hidden="true">${INSIGHT_ICON[i.kind] || 'ⓘ'}</span>` +
+        `<div><p>${esc(i.text)}</p>` +
+        (LEVEL_LABEL[i.level] ? `<span class="lvl">${LEVEL_LABEL[i.level]}</span>` : '') +
+        '</div></div>').join('') +
+    '<p class="insights-foot">این نکته‌ها از روی همین داده محاسبه شده‌اند و جای بررسی انسانی را نمی‌گیرند.</p>' +
+    '</section>';
+}
+
+// The line under the chart saying what it is actually based on.
+//
+// Every one of these is a caveat the reader would otherwise have to guess:
+// how many rows, how many categories were folded away, and whether the scan
+// hit its ceiling. A chart that quietly drops a tail is a chart that misleads.
+function chartCaption(cd) {
+  const bits = [
+    `بر پایه <b>${faFull.format(cd.rows)}</b> ردیف`,
+    `<b>${faFull.format(cd.groups)}</b> دسته`,
+  ];
+  if (cd.groups > cd.labels.length) {
+    bits.push(`${faFull.format(cd.labels.length)} دستهٔ نخست نمایش داده شده` +
+      (cd.other ? ` (بقیه: ${fmtFull(cd.other)})` : ''));
+  }
+  if (cd.currency) bits.push(`واحد: <b>${esc(cd.currency)}</b>`);
+  // Rows the server could not read as a number contributed nothing. Saying so
+  // is the difference between a total that is low and a total that is wrong.
+  if (cd.unparsed) bits.push(`<b>${faFull.format(cd.unparsed)}</b> ردیف بدون مقدار عددی`);
+  if (cd.capped) bits.push('<b>نمونهٔ محدود شده</b>');
+  return '<div class="chartstat">' + bits.map(b => '<span>' + b + '</span>').join('') + '</div>';
+}
+
+// ------------------------------------------------------- the date picker
+//
+// The calendar and the picker itself live in datepick.js, shared with the
+// evaluation page; a date field here calls docfindDatePicker.show. What stays
+// is the placement rule, which the name suggestions below also use.
+
+// Sit the box under its field, flip it above when there is not enough room
+// below, and clamp to the viewport so it is never left half offscreen.
+function placePicker(box, input) {
+  const r = input.getBoundingClientRect();
+  const bw = box.offsetWidth, bh = box.offsetHeight, gap = 6, edge = 8;
+  let top = r.bottom + gap;
+  if (top + bh > innerHeight - edge && r.top - gap - bh >= edge) top = r.top - gap - bh;
+  top = Math.max(edge, Math.min(top, innerHeight - bh - edge));
+  // Align the edge the reader starts from, which is the right in this RTL page.
+  const rtl = getComputedStyle(document.documentElement).direction === 'rtl';
+  let left = rtl ? r.right - bw : r.left;
+  left = Math.max(edge, Math.min(left, innerWidth - bw - edge));
+  box.style.top = top + 'px';
+  box.style.left = left + 'px';
+}
+document.addEventListener('click', e => {
+  if (openSugg && !openSugg.contains(e.target) && e.target !== suggAnchor) closeSugg();
+});
+const showPicker = input => window.docfindDatePicker.show(input);
+
+// ------------------------------------------------------- name suggestions
+//
+// A dropdown of this application's own, in place of <datalist>.
+//
+// The native one could not be styled at all -- it drew a pale Windows list
+// against a dark Persian panel, in the platform's font and the platform's
+// reading direction -- and it had no way of saying that an answer was still
+// on its way, so a field that had not replied yet looked exactly like a field
+// with nothing to offer.
+//
+// What is kept from it, deliberately: the field remains free text, because
+// the suggestions come from one table and the filter may match more than that
+// table holds; and the keyboard behaves the way people already expect from
+// the native control -- arrows move, Enter takes the highlighted row, Escape
+// closes without changing anything.
+const suggestCache = new Map();
+
+let openSugg = null;     // the list currently on screen
+let suggAnchor = null;   // the field it belongs to
+let suggValues = [];     // what is in it, in order
+let suggAt = -1;         // which row the keyboard is on, -1 for none
+let suggPick = null;     // what to do with the row the reader chooses
+
+function closeSugg() {
+  if (!openSugg) return;
+  openSugg.remove();
+  if (suggAnchor) {
+    suggAnchor.setAttribute('aria-expanded', 'false');
+    suggAnchor.removeAttribute('aria-activedescendant');
+  }
+  openSugg = null; suggAnchor = null; suggValues = []; suggAt = -1; suggPick = null;
+  removeEventListener('scroll', repositionSugg, true);
+  removeEventListener('resize', repositionSugg);
+}
+
+function repositionSugg() {
+  if (openSugg && suggAnchor) placePicker(openSugg, suggAnchor);
+}
+
+// The box for a field, reused while that field keeps it. Reused rather than
+// rebuilt so that replacing a loading state with results does not flash the
+// panel out and back in underneath the pointer.
+function suggBox(input) {
+  if (openSugg && suggAnchor === input) return openSugg;
+  closeSugg();
+  const box = document.createElement('div');
+  box.className = 'sugg';
+  box.id = 'suggpop';
+  box.setAttribute('role', 'listbox');
+  // At least as wide as the field it belongs to; wider if a name needs it.
+  box.style.minWidth = Math.round(input.getBoundingClientRect().width) + 'px';
+  box.style.maxWidth = Math.round(Math.min(innerWidth - 24, 420)) + 'px';
+  // Into the body, for the reason the date picker is -- see .sugg.
+  document.body.appendChild(box);
+  openSugg = box; suggAnchor = input; suggValues = []; suggAt = -1; suggPick = null;
+  input.setAttribute('aria-expanded', 'true');
+
+  // Once per box, here rather than in suggShow.
+  //
+  // suggShow reuses this box for as long as the field keeps it, so registering
+  // the handler there added another one on every keystroke. They all fire on
+  // the one click: the first took the name and closed the list, and closing
+  // empties suggValues -- so the next handler read suggValues[i] of an empty
+  // array, got undefined, and wrote that into the filter. The field then said
+  // "undefined" and the report matched nothing, which is what somebody
+  // choosing a name from a list saw.
+  //
+  // mousedown, not click: a click fires after the field has already lost
+  // focus, and the blur handler would have closed the list first.
+  box.addEventListener('mousedown', e => {
+    const it = e.target.closest('.sugg-item');
+    if (!it) return;
+    e.preventDefault();
+    const v = suggValues[+it.dataset.i];
+    // Nothing to take is a no-op, not a filter set to nothing. Whatever the
+    // reader clicked, they did not ask for an empty result.
+    if (v === undefined || !suggPick) return;
+    suggPick(v);
+  });
+
+  addEventListener('scroll', repositionSugg, true);
+  addEventListener('resize', repositionSugg);
+  return box;
+}
+
+// The typed part, picked out inside each suggestion. Escaped in three pieces
+// rather than escaping the whole string and searching in that: escaping
+// lengthens the text -- & becomes &amp; -- so an offset found in the escaped
+// copy would no longer point at the same character.
+function suggMark(v, typed) {
+  if (!typed) return esc(v);
+  const i = v.toLowerCase().indexOf(typed.toLowerCase());
+  if (i < 0) return esc(v);
+  return esc(v.slice(0, i)) +
+         '<b>' + esc(v.slice(i, i + typed.length)) + '</b>' +
+         esc(v.slice(i + typed.length));
+}
+
+function suggLoading(input) {
+  const box = suggBox(input);
+  // Only when there is nothing already in it. A list that has results and is
+  // refreshing them should keep showing the old ones rather than replace them
+  // with a spinner the reader then has to wait out.
+  if (box.querySelector('.sugg-item')) return;
+  box.innerHTML =
+    '<div class="sugg-load" role="status">' +
+      '<span class="sugg-dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
+      '<span>در حال یافتن گزینه‌ها…</span>' +
+    '</div>';
+  placePicker(box, input);
+}
+
+function suggShow(input, values, typed, onPick) {
+  const lower = typed.toLowerCase();
+  const shown = (typed ? values.filter(v => v.toLowerCase().includes(lower)) : values)
+    .slice(0, 40);
+  const box = suggBox(input);
+  // Set together, and only here: the rendered rows carry an index into
+  // suggValues, so the two must never be replaced independently.
+  suggValues = shown; suggAt = -1; suggPick = onPick;
+  input.removeAttribute('aria-activedescendant');
+
+  if (!shown.length) {
+    // Said rather than left blank, and it says the field still works: these
+    // suggestions are one table's worth and a filter may match more.
+    box.innerHTML = '<div class="sugg-empty">' +
+      (typed ? 'گزینه‌ای با این نام نیست؛ می‌توانید آزاد بنویسید.'
+             : 'گزینه‌ای برای پیشنهاد نیست.') + '</div>';
+    placePicker(box, input);
+    return;
+  }
+
+  box.innerHTML = shown.map((v, i) =>
+    '<button type="button" class="sugg-item" role="option" aria-selected="false"' +
+    ' id="sugg-o' + i + '" data-i="' + i + '">' + suggMark(v, typed) + '</button>'
+  ).join('');
+
+  placePicker(box, input);
+}
+
+// Which row the keyboard is on. Kept as a class and an aria-activedescendant
+// rather than by moving focus: focus has to stay in the field so the reader
+// can keep typing, which is the whole difference between this and a <select>.
+function suggMove(input, delta) {
+  if (!openSugg || !suggValues.length) return;
+  const items = [...openSugg.querySelectorAll('.sugg-item')];
+  if (!items.length) return;
+  if (suggAt >= 0) {
+    items[suggAt].classList.remove('on');
+    items[suggAt].setAttribute('aria-selected', 'false');
+  }
+  // Wraps, and steps off the end back to "nothing chosen" so there is always
+  // a way back to what was typed.
+  suggAt += delta;
+  if (suggAt < -1) suggAt = items.length - 1;
+  if (suggAt >= items.length) suggAt = -1;
+  if (suggAt < 0) { input.removeAttribute('aria-activedescendant'); return; }
+  const it = items[suggAt];
+  it.classList.add('on');
+  it.setAttribute('aria-selected', 'true');
+  it.scrollIntoView({ block: 'nearest' });
+  input.setAttribute('aria-activedescendant', it.id);
+}
+
+async function loadSuggestions(rep, param, input, onPick) {
+  const typed = input.value.trim();
+  const key = rep.id + '|' + param + '|' + typed.slice(0, 3);
+  if (suggestCache.has(key)) {
+    suggShow(input, suggestCache.get(key), typed, onPick);
+    return;
+  }
+  suggLoading(input);
+  try {
+    const r = await api('/api/reports/suggest?id=' + encodeURIComponent(rep.id) +
+      '&param=' + encodeURIComponent(param) + '&q=' + encodeURIComponent(typed));
+    if (!r.ok) { closeSugg(); return; }
+    const d = await r.json();
+    suggestCache.set(key, d.values || []);
+    // The field may have moved on while this was in flight -- a second
+    // keystroke opens the box for the same field, but a click elsewhere
+    // closes it, and answering into a closed box would pop it back open
+    // under whatever the reader is doing now.
+    if (suggAnchor !== input) return;
+    suggShow(input, d.values || [], input.value.trim(), onPick);
+  } catch (e) {
+    // Suggestions are a convenience; typing still works.
+    if (suggAnchor === input) closeSugg();
+  }
+}
+
+// --------------------------------------------------- multi-value filters
+//
+// A filter that takes several values at once -- two or three companies, a
+// handful of colleagues -- and matches a row carrying any of them. The chosen
+// values sit in the box as removable tokens and the reader keeps typing beside
+// them.
+//
+// The selection is held as newline-separated text on a hidden field carrying
+// the id every other part of this page already uses for a filter,
+// $('f-<name>'). collectParams, filterSummary, the CSV export, پاک کردن and a
+// click on the chart all address a filter that way, and keeping it true is what
+// makes a token field a drop-in rather than five callers taught about tokens.
+//
+// Newlines rather than commas, which is what KindList splits on: a company may
+// be filed as "Example Trading Co (North)" and could as easily carry a comma,
+// and splitting on one would search for two firms that do not exist.
+// internal/reports/bind.go splits the value on the same character.
+function chipValues(name) {
+  const box = $('f-' + name);
+  if (!box) return [];
+  return String(box.value || '').split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+// chipsShow paints one filter's tokens from its stored value.
+function chipsShow(name) {
+  const list = $('f-' + name + '-chips');
+  if (!list) return;
+  list.innerHTML = chipValues(name).map((v, i) =>
+    '<span class="chip-tok"><span class="t">' + esc(v) + '</span>' +
+    '<button type="button" class="x" data-i="' + i + '" tabindex="0"' +
+    ' aria-label="' + esc('حذف ' + v) + '">×</button></span>').join('');
+}
+
+// chipsSet stores a selection and repaints it, and says whether anything
+// actually changed -- so a duplicate pick does not re-run the report.
+function chipsSet(name, vals) {
+  const box = $('f-' + name);
+  if (!box) return false;
+  const seen = new Set(), out = [];
+  for (const v of vals) {
+    const t = String(v === undefined || v === null ? '' : v).trim();
+    // De-duplicated: choosing the same name twice is not a second filter, and
+    // it would put the same branch into the pattern twice.
+    if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+  }
+  const next = out.join('\n');
+  if (next === box.value) return false;
+  box.value = next;
+  chipsShow(name);
+  return true;
+}
+
+function chipsAdd(name, v) { return chipsSet(name, chipValues(name).concat([v])); }
+
+function chipsRemove(name, i) {
+  const vals = chipValues(name);
+  if (!(i >= 0 && i < vals.length)) return false;
+  vals.splice(i, 1);
+  return chipsSet(name, vals);
+}
+
+// chipsTake moves whatever is in the typing field into the tokens.
+//
+// This is what keeps the oldest habit working: type a name, press Enter or
+// اعمال فیلتر, get that name. Text still sitting in the box is not in the value
+// the query reads, so it has to be taken first or the filter would apply as
+// though nothing had been typed.
+function chipsTake(name, input) {
+  const typed = (input.value || '').trim();
+  input.value = '';
+  if (!typed) return false;
+  return chipsAdd(name, typed);
+}
+
+// chipsSync repaints every token field on the page from its stored value and
+// empties the typing boxes.
+//
+// For the paths that assign to a filter rather than going through the tokens --
+// پاک کردن, and a click on a chart category. Both write to $('f-<name>').value,
+// which is the right thing to write to and shows nothing on its own.
+function chipsSync(rep) {
+  (rep.params || []).forEach(p => {
+    if (p.kind !== 'anyof') return;
+    const typing = $('f-' + p.name + '-type');
+    if (typing) typing.value = '';
+    chipsShow(p.name);
+  });
+}
+
+// --------------------------------------------------------------- the list
+function showList() {
+  destroyChart(); destroyMonthly();
+  $('pageTitle').textContent = 'گزارش‌ها';
+  // The builder, for those who hold it: where a new report is written. Its
+  // permissions are given to named accounts, never by a role, so being an
+  // administrator is not enough.
+  const holds = id => !!(me && (me.permissions || []).includes(id));
+  const builderCard = holds('page:builder')
+    ? '<div class="cards"><a class="card-link analysis-card" href="/builder">' +
+        '<span class="t">ساختن گزارش</span>' +
+        '<span class="d">اتصال به پایگاه داده، نوشتن پرس‌وجو، فیلتر و نمودار، و ذخیره به‌عنوان گزارش</span>' +
+        '<span class="m"><span class="chip chip-accent">SQL</span></span>' +
+      '</a></div>'
+    : '';
+  if (!catalogue.length) {
+    $('main').innerHTML = builderCard + '<div class="widget"><div class="note">' +
+      (unconfigured
+        ? 'هنوز گزارشی روی این سرور تعریف نشده است. پوشهٔ فایل‌های SQL گزارش‌ها را با گزینهٔ ' +
+          '<code dir="ltr">-reports</code> و پایگاه دادهٔ آن‌ها را با متغیرهای ' +
+          '<code dir="ltr">DOCFIND_DB_*</code> مشخص کنید و سرویس را دوباره راه‌اندازی کنید.'
+        : 'هیچ گزارشی به شما اختصاص داده نشده است.') + '</div></div>';
+    return;
+  }
+
+  const card = r =>
+      '<a class="card-link" href="#/' + encodeURIComponent(r.id) + '">' +
+        '<span class="t">' + esc(r.title) + '</span>' +
+        (r.description ? '<span class="d">' + esc(r.description) + '</span>' : '') +
+        '<span class="m">' +
+          (r.chart ? '<span class="chip">نمودار</span>' : '') +
+          '<span>' + (r.params && r.params.length
+            ? faFull.format(r.params.length) + ' فیلتر' : 'بدون فیلتر') + '</span>' +
+        '</span>' +
+      '</a>';
+  // A family («گزارش انبارها») is one card where its first member stood,
+  // opening that member; the others are chosen on the report's own page.
+  const listed = [];
+  const families = new Set();
+  for (const r of catalogue) {
+    if (!r.family) { listed.push(r); continue; }
+    if (families.has(r.family)) continue;
+    families.add(r.family);
+    const members = catalogue.filter(m => m.family === r.family);
+    if (members.length < 2) { listed.push(r); continue; }
+    listed.push(Object.assign({}, r, {
+      title: r.family_title || r.title,
+      description: [...new Set(members.map(m => m.variant[0]))].join('، '),
+    }));
+  }
+
+  // Reports that declare a group -- the accounting three, from the finance
+  // server -- get a heading and a grid of their own under the general list,
+  // named as the menu names them.
+  const groups = [...new Set(listed.map(r => r.group).filter(Boolean))];
+
+  $('main').innerHTML = builderCard +
+    '<div class="cards-rest">' + listed.filter(r => !r.group).map(card).join('') + '</div>' +
+    groups.map(g => '<h2 class="cards-group">' + esc(g) + '</h2>' +
+      '<div class="cards-rest">' + listed.filter(r => r.group === g).map(card).join('') + '</div>').join('');
+}
+
+// ------------------------------------------------------------- the report
+function filterHTML(rep) {
+  if (!rep.params || !rep.params.length) return '';
+  const hint = { like: 'شامل…', date: 'YYYY/MM/DD', list: 'با کاما جدا کنید',
+                 anyof: 'یک یا چند…', text: '' };
+
+  // A token field's <label> has to name the box the reader types in, not the
+  // hidden field the query reads: a label pointing at something not rendered
+  // moves focus nowhere when it is clicked and announces nothing.
+  const labelTarget = p => 'f-' + esc(p.name) + (p.kind === 'anyof' ? '-type' : '');
+
+  // The aria-* that say "arrows do something here". Shared by the plain
+  // suggestion fields and the token ones, which are the same control from a
+  // screen reader's point of view.
+  const combobox = ' role="combobox" aria-expanded="false" aria-controls="suggpop"' +
+                   ' aria-autocomplete="list" aria-haspopup="listbox" autocomplete="off"';
+
+  // A parameter carrying options becomes a dropdown. The values are raw
+  // database strings ("TO_DO", "1") and the labels are Persian, so a text box
+  // here invites someone to type "در جریان" against a column holding "TO_DO"
+  // and get nothing back with nothing on screen explaining why.
+  const field = p => {
+    const id = 'f-' + esc(p.name);
+    if (p.options && p.options.length) {
+      const chosen = p.default || '';
+      // A required choice switches what is shown -- with or without VAT --
+      // so it has no «همه»: "all" means nothing there.
+      const opts = (p.required ? [] : ['<option value="">همه</option>']).concat(p.options.map(o =>
+        '<option value="' + esc(o.value) + '"' +
+        (o.value === chosen ? ' selected' : '') + '>' + esc(o.label) + '</option>'));
+      return '<select id="' + id + '" data-p="' + esc(p.name) + '">' + opts.join('') + '</select>';
+    }
+    // Several values in one filter: the tokens, the box to type in, and the
+    // hidden field that holds the selection under the id the rest of the page
+    // reads. See the multi-value section above for why it is arranged this way.
+    if (p.kind === 'anyof') {
+      return '<span class="chipfield" id="' + id + '-box">' +
+               '<span class="chips" id="' + id + '-chips"></span>' +
+               '<input id="' + id + '-type" class="chiptype"' +
+               (p.suggestable ? combobox : ' autocomplete="off"') +
+               ' inputmode="text" placeholder="' + esc(hint.anyof) + '">' +
+               '<input type="hidden" id="' + id + '" data-p="' + esc(p.name) + '"' +
+               ' value="' + esc(p.default || '') + '">' +
+             '</span>';
+    }
+    const isDate = p.kind === 'date';
+    // A combobox: a text field that also offers a list, which is what these
+    // are. role and the aria-* attributes are what tell a screen reader that
+    // arrows do something here -- the native datalist said it for us.
+    return '<input id="' + id + '" data-p="' + esc(p.name) + '"' +
+           ' value="' + esc(p.default || '') + '"' +
+           (isDate ? ' class="datefield" readonly data-cal="' +
+                     esc(p.calendar || 'jalali') + '"' : '') +
+           (p.suggestable ? combobox : '') +
+           ' inputmode="' + (isDate ? 'numeric' : 'text') + '"' +
+           ' placeholder="' + esc(isDate ? (p.calendar === 'gregorian' ? 'میلادی' : 'شمسی')
+                                         : (hint[p.kind] || '')) + '">';
+  };
+
+  return '<div class="filters">' + rep.params.map(p =>
+      '<div' + (p.kind === 'date' ? ' class="datewrap"' : '') + '>' +
+        '<label for="' + labelTarget(p) + '">' + esc(p.label || p.name) + '</label>' +
+        '<span class="ring">' + field(p) + '</span>' +
+        // Said once under each token field, because a box that takes several
+        // values is not a control most readers here have met.
+        (p.kind === 'anyof' ? '<span class="chiphint">چند مورد مجاز است</span>' : '') +
+      '</div>').join('') +
+    '<div class="apply">' +
+      '<button class="btn primary" id="applyBtn">اعمال فیلتر</button>' +
+      '<button class="btn" id="clearBtn">پاک کردن</button>' +
+    '</div></div>';
+}
+
+function collectParams(rep) {
+  const out = {};
+  (rep.params || []).forEach(p => { const el = $('f-' + p.name); if (el) out[p.name] = el.value; });
+  return out;
+}
+
+// A family's choice (-- family / -- variant): the first dropdown, and the
+// second where the first choice is between several reports -- a «گزارش
+// انبارها» family, say, choosing the warehouse and then one of its ledgers. Only
+// the members this reader may open are in the catalogue, so only they are
+// offered. A choice opens that member's own page.
+function familyBar(rep) {
+  const members = rep.family ? catalogue.filter(r => r.family === rep.family) : [];
+  if (members.length < 2 || !rep.variant || !rep.variant.length) return '';
+  const levels = rep.family_levels || [];
+  const firsts = [...new Set(members.map(r => r.variant[0]))];
+  const seconds = members.filter(r => r.variant[0] === rep.variant[0] && r.variant.length > 1);
+  const select = (id, label, values, current) =>
+    '<label class="family-pick"><span>' + esc(label) + '</span>' +
+      '<select class="input" id="' + id + '">' +
+        values.map(v => '<option value="' + esc(v) + '"' + (v === current ? ' selected' : '') + '>' + esc(v) + '</option>').join('') +
+      '</select></label>';
+  return '<div class="family-bar">' +
+    select('famPick1', levels[0] || rep.family_title || 'گزارش', firsts, rep.variant[0]) +
+    (seconds.length > 1 ? select('famPick2', levels[1] || 'نوع', seconds.map(r => r.variant[1]), rep.variant[1]) : '') +
+  '</div>';
+}
+function wireFamilyBar(rep) {
+  const members = catalogue.filter(r => r.family === rep.family);
+  const go = r => { if (r && r.id !== rep.id) location.hash = '#/' + encodeURIComponent(r.id); };
+  const a = $('famPick1'), b = $('famPick2');
+  if (a) a.onchange = () => go(
+    members.find(r => r.variant[0] === a.value && r.variant[1] === rep.variant[1]) ||
+    members.find(r => r.variant[0] === a.value));
+  if (b) b.onchange = () => go(members.find(r => r.variant[0] === rep.variant[0] && r.variant[1] === b.value));
+}
+
+function showReport(id) {
+  const rep = catalogue.find(r => r.id === id);
+  if (!rep) { location.hash = ''; return; }
+  destroyChart(); destroyMonthly();
+  const title = rep.family_title && familyBar(rep) ? rep.family_title : rep.title;
+  $('pageTitle').textContent = title;
+  $('main').innerHTML =
+    crumbBar(title) +
+    '<section class="widget">' +
+      '<h2>' + esc(title) +
+        '<span class="spacer"></span>' +
+        '<button class="btn" id="refreshBtn">بازخوانی</button>' +
+        '<button class="btn" id="exportBtn">خروجی CSV</button>' +
+        '<button class="btn" id="repPdf">' + PDF_ICON + '<span>خروجی PDF</span></button>' +
+      '</h2>' +
+      familyBar(rep) +
+      filterHTML(rep) +
+      // The well exists whenever the report can say ANYTHING about periods --
+      // which is every report, because the ones that cannot be compared carry
+      // a written reason instead. Gating this on monthly_column alone is how
+      // the panel went missing from exactly the two reports it was written
+      // for: the route answered correctly, loadMonthly ran, and its first line
+      // returned because there was no element to draw into.
+      ((rep.monthly_column || rep.monthly_why_not)
+        ? '<div id="monthlywell" data-print-section="روند ماهانه">' + skeleton(1) + '</div>' : '') +
+      (rep.chart ? '<div class="chartwell" id="chartwell" data-print-section="نمودار">' + skeleton(1) + '</div>' : '') +
+      '<div id="body" data-print-section="جدول">' + skeleton(7) + '</div>' +
+    '</section>';
+
+  wireFamilyBar(rep);
+
+  // A click on a chart bar fills the filter that matches the chart's own
+  // category and re-runs the report. Which filter that is comes from the
+  // report's declaration, not a guess: the chart names its label column, and
+  // the parameter carrying the same heading is the one to set.
+  window.filterByChartLabel = label => {
+    // Only the filter whose heading is the chart's own category.
+    //
+    // There used to be a fallback here: with no match, the first filter that
+    // could offer suggestions. That is worse than doing nothing, and it was
+    // doing it on four of the eight charted reports -- clicking an expert's
+    // bar on مناقصات در جریان searched نام مشتری for a person's name and
+    // returned an empty table, which reads as "this expert has no tenders".
+    // A click that cannot be honoured now leaves the report alone.
+    const target = (rep.params || []).find(p =>
+      p.label && p.label === (chartCategory[rep.id] || ''));
+    if (!target) return;
+    const el = $('f-' + target.name);
+    if (!el) return;
+    if (el.tagName === 'SELECT') {
+      // A dropdown is matched on what it says, not on what it stores: the
+      // chart is drawn from the readable column and the option values are the
+      // raw ones underneath it. Assigning a value the control has no option
+      // for silently leaves it where it was.
+      const want = String(label).trim();
+      const opt = [...el.options].find(o => o.value.trim() === want) ||
+                  [...el.options].find(o => o.textContent.trim() === want);
+      if (!opt) return;
+      el.value = opt.value;
+    } else {
+      el.value = label;
+    }
+    // On a token field this replaces the whole selection with the category
+    // clicked, which is what a click on a chart means -- "show me this one".
+    // The tokens have to be repainted for it, and the field to focus is the
+    // box the reader types in rather than the hidden one holding the value.
+    if (target.kind === 'anyof') {
+      chipsShow(target.name);
+      const typing = $('f-' + target.name + '-type');
+      if (typing) typing.focus();
+    } else {
+      el.focus();
+    }
+    run(rep, 1, true);
+  };
+
+  // A click on a month narrows the report to that month.
+  //
+  // The bounds are set as text on the two date filters. Because Jalali dates
+  // are stored zero-padded ("1404/03/09"), a plain string comparison is
+  // already chronological -- so an upper bound of /31 covers a thirty-day
+  // month exactly and still cannot reach into the next one, no calendar
+  // arithmetic and no leap-year special case.
+  window.filterByMonth = key => {
+    const dates = (rep.params || []).filter(p => p.kind === 'date');
+    if (dates.length < 2) return;
+    const from = $('f-' + dates[0].name), to = $('f-' + dates[1].name);
+    if (!from || !to) return;
+    from.value = key + '/01';
+    to.value = key + '/31';
+    run(rep, 1, true);
+  };
+
+  // The masthead says which filters produced the sheet, and which part of the
+  // data is on it.
+  //
+  // The second half is the one that matters. A report is paged, so an export
+  // carries the page the reader is looking at and not the whole result -- and
+  // a printed table with no statement of that is indistinguishable from the
+  // complete answer. It gets quoted in a meeting as the complete answer. So
+  // the page number and the row count are printed, and when there is more
+  // behind it the sheet says so and names the export that does carry
+  // everything.
+  const pdf = $('repPdf');
+  if (pdf) pdf.addEventListener('click', () => {
+    const st = state[rep.id] || {};
+    const lines = filterSummary(rep);
+    if (st.shown) {
+      lines.push('صفحه ' + faFull.format(st.page || 1) +
+                 '، ' + faFull.format(st.shown) + ' ردیف');
+    }
+    if (st.hasMore) {
+      lines.push('این برگه فقط ردیف‌های همین صفحه را دارد؛ برای همهٔ ردیف‌ها خروجی CSV بگیرید');
+    }
+    exportPDF(rep.title, lines);
+  });
+
+  const apply = $('applyBtn');
+  if (apply) apply.addEventListener('click', () => run(rep, 1, true));
+  const clear = $('clearBtn');
+  if (clear) clear.addEventListener('click', () => {
+    (rep.params || []).forEach(p => {
+      const el = $('f-' + p.name);
+      if (!el) return;
+      // A dropdown clears to its "همه" entry -- the empty option it genuinely
+      // has -- and not to a value it has no option for, which would leave the
+      // control showing whatever happened to be first.
+      // A required one has no such entry, and goes back to its default.
+      if (el.tagName === 'SELECT') { el.value = p.required ? (p.default || '') : ''; return; }
+      // Everything else clears to the value the report DECLARES, not to blank.
+      //
+      // Blank is not "no filter" on the way in: Bind substitutes the declared
+      // default for a value that is absent or empty, so clearing a report's
+      // dates put two empty boxes on screen and still queried the declared
+      // range -- and filterSummary, which reads these same
+      // fields, then printed "no date filter" across a sheet of bounded rows.
+      //
+      // The alternative fix -- making blank mean "no filter" in Bind -- is
+      // worse for exactly these parameters: the dates are bound into a
+      // BETWEEN, and BETWEEN '' AND '' matches nothing. Showing the default is
+      // the only state in which the screen and the query agree.
+      el.value = p.default || '';
+    });
+    // The token fields show their value rather than holding it, so restoring
+    // the declared default has to repaint them -- and empty the boxes people
+    // were typing in, which پاک کردن plainly means.
+    chipsSync(rep);
+    run(rep, 1, true);
+  });
+  (rep.params || []).forEach(p => {
+    const el = $('f-' + p.name);
+    if (!el) return;
+    // A multi-value filter is two elements: the hidden field the query reads,
+    // and the box the reader types in. Every listener below belongs on the box
+    // -- attaching them to a hidden field would be attaching them to something
+    // that never sees a keystroke.
+    const multi = p.kind === 'anyof';
+    const box = multi ? $('f-' + p.name + '-type') : el;
+    if (!box) return;
+
+    if (multi) {
+      const holder = $('f-' + p.name + '-box');
+      const removeTok = e => {
+        const x = e.target.closest('.chip-tok .x');
+        if (!x) return;
+        // Listened for on mousedown as well as click, for the reason the
+        // suggestion rows are: a click arrives only after the typing box has
+        // lost focus, the blur handler below then commits whatever was in it,
+        // and repainting the tokens destroys the very button the click was
+        // travelling to -- so the click never lands and the token stays.
+        // Keyboard activation produces a click with no mousedown before it, so
+        // both are listened for and whichever comes first does the work.
+        e.preventDefault();
+        if (chipsRemove(p.name, +x.dataset.i)) run(rep, 1, true);
+        // Focus must not be left on a button that no longer exists. Only when
+        // it is not already in the box: focusing it opens the suggestion list,
+        // and removing a token with the pointer should not do that.
+        if (document.activeElement !== box) box.focus();
+      };
+      if (holder) {
+        holder.addEventListener('mousedown', removeTok);
+        holder.addEventListener('click', removeTok);
+      }
+      // Backspace in an empty box takes the last token off, which is what a
+      // field of tokens has taught everyone to expect.
+      box.addEventListener('keydown', e => {
+        if (e.key !== 'Backspace' || box.value !== '') return;
+        const vals = chipValues(p.name);
+        if (!vals.length) return;
+        e.preventDefault();
+        if (chipsRemove(p.name, vals.length - 1)) run(rep, 1, true);
+      });
+      // Taken when the box loses focus, so اعمال فیلتر applies what is on
+      // screen rather than what was last confirmed. A click on a suggestion
+      // row does not reach here -- that handler prevents the default on
+      // mousedown, so the field never loses focus.
+      box.addEventListener('blur', () => { chipsTake(p.name, box); });
+    }
+
+    // The suggestion keyboard is registered first, on purpose. Enter means
+    // "take this name" when a row is highlighted and "apply the filter"
+    // otherwise, and the only way to keep the second handler from also firing
+    // is to be ahead of it and stop it.
+    if (p.suggestable) {
+      const pick = v => {
+        if (multi) {
+          // Into the tokens, with the typing box cleared and the list left
+          // open so the next name is one click away -- which is the whole
+          // point of a filter that takes several. The list is repositioned
+          // because a new token can push the box onto another line.
+          box.value = '';
+          const changed = chipsAdd(p.name, v);
+          repositionSugg();
+          if (changed) run(rep, 1, true);
+          return;
+        }
+        el.value = v;
+        closeSugg();
+        run(rep, 1, true);
+      };
+      let timer = null;
+      const ask = () => {
+        clearTimeout(timer);
+        // Debounced: one request after a pause, not one per keystroke.
+        timer = setTimeout(() => loadSuggestions(rep, p.name, box, pick), 180);
+      };
+      box.addEventListener('input', ask);
+      box.addEventListener('focus', ask);   // the common names, before typing
+      box.addEventListener('blur', () => {
+        // After the pointer has had its chance: a click on a row lands on
+        // mousedown, which is before this, but a click on the box's padding
+        // or its scrollbar should not close it either.
+        setTimeout(() => { if (suggAnchor === box && !openSugg?.matches(':hover')) closeSugg(); }, 120);
+      });
+      box.addEventListener('keydown', e => {
+        if (!openSugg || suggAnchor !== box) {
+          // ArrowDown on a quiet field opens the list, which is what the
+          // native control did.
+          if (e.key === 'ArrowDown') { e.preventDefault(); ask(); }
+          return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          suggMove(box, e.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (e.key === 'Enter' && suggAt >= 0) {
+          e.preventDefault();
+          // Stops the generic Enter handler below from also running and
+          // applying the filter with the old value still in the field.
+          e.stopImmediatePropagation();
+          pick(suggValues[suggAt]);
+          return;
+        }
+        if (e.key === 'Escape') {
+          // Swallowed, so Escape closes the list without also reaching the
+          // document handler that closes the date picker.
+          e.stopPropagation();
+          closeSugg();
+        }
+      });
+    }
+
+    // Enter in any filter box applies, which is what everyone tries first. On a
+    // token field it has to take what is in the box first: the value the query
+    // reads is the token list, and text still being typed is not in it yet.
+    box.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      if (multi) chipsTake(p.name, box);
+      run(rep, 1, true);
+    });
+    // A control with no "done typing" moment runs on change. That is a
+    // dropdown, and it is also a date field: the box is readonly and the
+    // calendar is the only way to set it, so choosing a day IS the whole
+    // interaction.
+    //
+    // The date half was missing, and the effect was not a missing convenience
+    // but a wrong page: showPicker dispatches a synthetic change when a day is
+    // chosen and nothing was listening for it, so the box read the date the
+    // reader had just picked while the table under it still described the old
+    // range, until somebody thought to press اعمال فیلتر.
+    //
+    // No double-run risk. The field is readonly, so the browser never fires a
+    // native change on it; the only change events are the picker's, and none of
+    // the paths that set these fields in code (clearBtn, filterByMonth,
+    // filterByChartLabel) dispatch one -- they call run themselves.
+    if (el.tagName === 'SELECT' || p.kind === 'date') {
+      el.addEventListener('change', () => run(rep, 1, true));
+    }
+
+    if (p.kind === 'date') {
+      // The field is read-only so the calendar is the only way to set it --
+      // these formats are exact, and a typo produces an empty report rather
+      // than an error.
+      el.addEventListener('click', ev => { ev.stopPropagation(); showPicker(el); });
+      el.addEventListener('focus', () => showPicker(el));
+    }
+
+  });
+  $('refreshBtn').addEventListener('click', () => run(rep, 1, true));
+  // No PDF export on a report page, by request.
+  //
+  // A report page shows one page of rows at a time, so the sheet could only
+  // ever carry those hundred while looking like the whole report -- which is
+  // the kind of document somebody takes into a meeting. خروجی CSV is beside
+  // this and exports the whole filtered result rather than the page, so the
+  // capability is not lost, only the misleading shape of it.
+  $('exportBtn').addEventListener('click', () => {
+    const q = new URLSearchParams(Object.assign({ id: rep.id }, collectParams(rep)));
+    // A normal navigation, so the browser saves the file and the session
+    // cookie goes with the request.
+    location.href = '/api/reports/export?' + q.toString();
+  });
+
+  // A token field renders empty and shows its selection from script, so a
+  // report that declares a default for one has to paint it before the first
+  // run -- otherwise the query is filtered by a value nothing on screen says.
+  chipsSync(rep);
+
+  // run() starts the findings too, without awaiting them: they are a second
+  // query and the table must not wait behind them.
+  run(rep, 1, true);
+}
+
+// A few grey bars standing in for the table that is coming.
+function skeleton(n) {
+  return '<div class="skel">' + Array.from({ length: n },
+    (_, i) => '<i style="width:' + (98 - (i % 4) * 11) + '%"></i>').join('') + '</div>';
+}
+
+// run fetches one page of the table, and optionally rebuilds the chart.
+//
+// withChart is false when only the page changed: the chart summarises the whole
+// filtered result, so paging through the table does not alter it, and
+// re-running the aggregate would be a second full scan for an identical
+// picture.
+async function run(rep, page, withChart) {
+  const st = state[rep.id] || (state[rep.id] = { page: 1 });
+  st.page = page || st.page;
+  const body = $('body');
+  if (!body) return;
+  const params = collectParams(rep);
+
+  body.innerHTML = skeleton(7);
+  // The chart is a second, independent request. Fired together with the table
+  // rather than after it, so the slower of the two sets the wait instead of
+  // the two adding up -- and a chart that fails still leaves a usable table.
+  if (rep.chart && withChart) loadChart(rep, params);
+  if ((rep.monthly_column || rep.monthly_why_not) && withChart) loadMonthly(rep, params);
+
+  try {
+    // Wrapped in busy(), which reveals the loading animation only if the wait
+    // passes 300ms. A report usually answers in single-digit milliseconds and
+    // the skeleton above covers it, so nothing appears.
+    const r = await busy(api('/api/reports/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: rep.id, params, page: st.page, per_page: 100 }),
+    }));
+    const d = await r.json();
+    if (!r.ok) {
+      body.innerHTML = '<div class="err">' + esc(d.error || 'اجرای گزارش ممکن نشد.') + '</div>';
+      return;
+    }
+    render(rep, d);
+    noteSource(body, d.data_source);
+  } catch (e) {
+    if (e.message !== 'unauthenticated') {
+      body.innerHTML = '<div class="err">ارتباط با سرور برقرار نشد.</div>';
+    }
+  }
+}
+
+async function loadChart(rep, params) {
+  const well = $('chartwell');
+  if (!well) return;
+  // Each run gets a token; a slow response from a previous filter must not
+  // paint over the chart the current one already drew.
+  const token = (well.dataset.token = String(Date.now() + Math.random()));
+  // Started now, awaited later: the download overlaps the query rather than
+  // following it.
+  const libPromise = loadChartLib();
+  try {
+    const r = await api('/api/reports/chart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: rep.id, params }),
+    });
+    if (well.dataset.token !== token) return;
+    const cd = await r.json();
+    if (!r.ok || !cd.labels || !cd.labels.length) {
+      destroyChart();
+      // `problem` is the server declining to draw something misleading -- a
+      // sum across mixed currencies, say. That is worth stating plainly
+      // rather than showing as a generic empty state.
+      const why = cd.problem || (r.ok ? 'داده‌ای برای نمودار وجود ندارد.'
+                                      : (cd.error || 'نمودار ساخته نشد.'));
+      well.innerHTML = '<div class="note">' + esc(why) + '</div>';
+      return;
+    }
+    // The library and the data were requested together; this waits only for
+    // whichever is still outstanding.
+    await libPromise;
+    if (well.dataset.token !== token) return;
+    chartCategory[rep.id] = cd.label || '';
+    // A broken-down chart needs room per bar, not per category.
+    //
+    // Twenty experts is twenty bars, which the fixed 340px box fits; twenty
+    // experts in three statuses is sixty, and at five pixels each the
+    // completed and cancelled bars were slivers too thin to point at. The box
+    // grows with the number of bars actually drawn, and is left alone for
+    // every other chart.
+    // The box no longer grows with the number of bars.
+    //
+    // It used to: 15px a bar for a broken-down chart up to 1400px, and 44px a
+    // row on a phone up to 1200px. Both were the right answer to "the bars are
+    // too thin to point at" and the wrong answer to "I cannot see the chart" --
+    // a report page became a column of chart taller than several screens. The
+    // stylesheet's fixed height applies instead, and zoomShell below turns the
+    // box into a window whose contents step up to four times that, so the room
+    // those heights bought is still reachable without moving the page.
+    const boxStyle = '';
+    well.innerHTML = chartCaption(cd) +
+      '<div class="chartbox"' + boxStyle + '><canvas id="chart"></canvas></div>' +
+      insightsHTML(cd);
+    if (!drawChart(cd)) {
+      well.innerHTML = '<div class="note">این نتیجه قابل نمایش به صورت نمودار نیست.</div>';
+    }
+  } catch (e) {
+    if (well.dataset.token !== token) return;
+    if (e.message !== 'unauthenticated') {
+      well.innerHTML = '<div class="note">نمودار بارگذاری نشد.</div>';
+    }
+  }
+}
+
+// ------------------------------------------------ the monthly summary banner
+//
+// A headline panel above the table: the total, the month-on-month move, and a
+// bar per month. It answers "how are we doing" before the reader has scrolled,
+// which a four-thousand-row table cannot.
+//
+// The figures come from the server over the whole filtered result, not from
+// the page of rows on screen -- a monthly total built from fifty visible rows
+// would be wrong in a way nobody could see.
+let monthlyChart = null;
+let compareChart = null;
+
+function destroyMonthly() {
+  if (monthlyWatch) { monthlyWatch(); monthlyWatch = null; }
+  if (monthlyChart) { monthlyChart.destroy(); monthlyChart = null; }
+  if (compareChart) { compareChart.destroy(); compareChart = null; }
+}
+
+async function loadMonthly(rep, params) {
+  const well = $('monthlywell');
+  if (!well) return;
+  const token = String(Date.now() + Math.random());
+  well.dataset.token = token;
+  well.innerHTML = skeleton(1);
+
+  const libPromise = loadChartLib();
+  try {
+    const r = await api('/api/reports/monthly', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: rep.id, params }),
+    });
+    if (well.dataset.token !== token) return;
+    const m = await r.json();
+    const series = r.ok && m.labels && m.labels.length;
+    const cmp = r.ok ? m.compare : null;
+    // A report with no date column returns a comparison that is not available
+    // and says why, and no series at all. It still renders: the reason is the
+    // answer to "why is there no chart here", and an empty strip is not.
+    if (!series && !cmp) {
+      destroyMonthly();
+      well.innerHTML = '';
+      return;
+    }
+    await libPromise;
+    if (well.dataset.token !== token) return;
+    destroyMonthly();
+    well.innerHTML = (series ? monthlyHTML(m) : '') + compareHTML(cmp);
+    // Both bar charts wait for the same first sight of the banner: it sits
+    // right under the filters, so on most screens this fires at once, but a
+    // report reached by a bookmark low on the page should not pay for either
+    // until the reader has actually scrolled up to them.
+    monthlyWatch = lazyChart(well, () => {
+      monthlyWatch = null;
+      if (series) drawMonthly(m, rep);
+      if (cmp && cmp.available) drawCompare(cmp);
+    });
+  } catch (e) {
+    if (well.dataset.token !== token) return;
+    if (e.message !== 'unauthenticated') well.innerHTML = '';
+  }
+}
+
+// The comparison panel: three figures and two years of bars.
+//
+// Every figure is printed even when its percentage cannot be: "52 this month
+// against none last year" is a fact worth reading, and "+∞%" is not a number.
+// The percentage is held back in exactly two cases -- a base of zero, and a
+// pair of months holding fewer rows than the percentage can bear -- and both
+// say so in words instead.
+function compareHTML(c) {
+  if (!c) return '';
+  if (!c.available) {
+    return '<section class="cmp glass">' +
+      '<div class="cmp-head"><span class="cmp-title">مقایسه دوره‌ای</span></div>' +
+      `<p class="cmp-none">${esc(c.reason || '')}</p>` +
+    '</section>';
+  }
+
+  const card = (k, d, note) => {
+    const has = d.has && !d.thin;
+    const up = has && d.pct > 0, down = has && d.pct < 0;
+    const move = has
+      ? `<span class="trend ${up ? 'up' : down ? 'down' : 'flat'}">` +
+          `${up ? '▲' : down ? '▼' : '■'} ${faFull.format(Math.abs(Math.round(d.pct)))}٪</span>`
+      : '';
+    // When the base is zero there is no percentage to print, so the card says
+    // what happened instead. Reading "against none" is unambiguous; reading a
+    // blank space beside a number is not.
+    const why = d.has
+      ? (d.thin ? 'تعداد کم است' : '')
+      : (d.then > 0 ? '' : 'در دوره قبل چیزی ثبت نشده');
+    return '<div class="cmp-card">' +
+      `<span class="cmp-k">${esc(k)}</span>` +
+      '<span class="cmp-fig">' +
+        `<span class="cmp-now">${faFull.format(Math.round(d.now))}</span>` +
+        move +
+      '</span>' +
+      `<span class="cmp-then">${esc(d.label)}: ${faFull.format(Math.round(d.then))}</span>` +
+      (why ? `<span class="cmp-note">${esc(why)}</span>` : '') +
+      (note ? `<span class="cmp-note">${esc(note)}</span>` : '') +
+    '</div>';
+  };
+
+  const when = c.partial
+    ? `${esc(c.month_label)} تا روز ${faFull.format(c.day)}`
+    : esc(c.month_label);
+
+  return '<section class="cmp glass">' +
+    '<div class="cmp-head">' +
+      '<span class="cmp-title">مقایسه دوره‌ای</span>' +
+      `<span class="cmp-when">${when}</span>` +
+    '</div>' +
+    '<div class="cmp-row">' +
+      // The same two names the report builder already offers for these
+      // comparisons, so the two places in the app do not invent separate
+      // vocabulary for one idea. See chartCompares in customchart.go.
+      card('نسبت به ماه گذشته', c.mom) +
+      card('ماه با ماه پارسال', c.yoy) +
+      card(`امسال تا این ماه در برابر ${c.last_year_label}`, c.year) +
+    '</div>' +
+    '<div class="cmp-box"><canvas id="compareChart"></canvas></div>' +
+    (c.caveats && c.caveats.length
+      ? '<ul class="cmp-cav">' +
+          c.caveats.map(s => `<li>${esc(s)}</li>`).join('') +
+        '</ul>'
+      : '') +
+  '</section>';
+}
+
+function drawCompare(c) {
+  const canvas = $('compareChart');
+  if (!canvas || !window.Chart) return;
+  const muted = CHART_INK, line = cssVarOr('--line', '#33436b');
+  const accent = cssVarOr('--accent', '#E5641D');
+
+  compareChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: c.months,
+      datasets: [
+        {
+          // Last year first so it draws behind in the legend order the eye
+          // reads: the older year is the baseline, this year is the news.
+          label: c.last_year_label,
+          data: c.last_year,
+          backgroundColor: 'rgb(148 163 184 / .34)',
+          borderColor: 'rgb(148 163 184 / .55)',
+          borderWidth: 1,
+          borderRadius: 5,
+          maxBarThickness: 22,
+        },
+        {
+          label: c.this_year_label,
+          data: c.this_year,
+          backgroundColor: accent,
+          borderRadius: 5,
+          maxBarThickness: 22,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, resizeDelay: 120,
+      animation: reduceMotion ? false : { duration: 480, easing: 'easeOutQuart' },
+      layout: { padding: { top: 4, right: 6, bottom: 0, left: 6 } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          // Above the plot, as every other chart on this page does: the key
+          // says which year is which, and it is no use after the chart has
+          // been read. The font comes from Chart.defaults, set once when the
+          // library loads -- naming a family here would override the Persian
+          // face with whatever this line happened to say.
+          position: 'top', align: 'end', rtl: true, textDirection: 'rtl',
+          labels: { color: CHART_INK, boxWidth: 12, boxHeight: 12,
+                    usePointStyle: true, pointStyle: 'rectRounded' },
+        },
+        tooltip: {
+          rtl: true, textDirection: 'rtl',
+          callbacks: {
+            label: ctx => ` ${ctx.dataset.label}: ${faFull.format(ctx.parsed.y)}`,
+          },
+        },
+      },
+      scales: {
+        // Reversed, like the monthly bars above it: these months read right to
+        // left, and a comparison drawn the other way round would run against
+        // the chart it sits under on the same page.
+        x: { reverse: true, position: 'bottom',
+             grid: { display: false }, border: { color: line },
+             ticks: { color: muted, maxRotation: 0, autoSkipPadding: 8,
+                      font: { size: 11.5 } } },
+        // border.display, not drawBorder: this is Chart.js 4, where drawBorder
+        // was removed and is accepted in silence rather than refused.
+        y: { position: 'right', beginAtZero: true,
+             grid: { color: line, drawTicks: false },
+             border: { display: false },
+             ticks: { color: muted, precision: 0, padding: 8, maxTicksLimit: 5,
+                      font: { size: 11.5 },
+                      callback: v => faFull.format(v) } },
+      },
+    },
+  });
+}
+
+function monthlyHTML(m) {
+  const up = m.has_change && m.change_pct > 0;
+  const down = m.has_change && m.change_pct < 0;
+  const move = !m.has_change ? '' :
+    `<span class="trend ${up ? 'up' : down ? 'down' : 'flat'}">` +
+      `${up ? '▲' : down ? '▼' : '■'} ${faFull.format(Math.abs(Math.round(m.change_pct)))}٪` +
+    '</span>';
+  // A scan that stopped early, or dates that could not be read, must be said
+  // out loud -- a banner is the most quoted thing on the page.
+  const caveats = [];
+  if (m.capped) caveats.push('نمودار از بخشی از داده‌ها ساخته شده است.');
+  if (m.skipped) caveats.push(`${faFull.format(m.skipped)} ردیف تاریخ خوانا نداشت.`);
+
+  return '<section class="banner glass glass-lit">' +
+    '<div class="banner-grid">' +
+      '<div class="banner-lede">' +
+        `<span class="banner-kicker">${esc(m.title || 'گزارش ماهانه')}</span>` +
+        `<span class="banner-figure">${faFull.format(m.total)}</span>` +
+        '<span class="banner-unit">سفارش در ' +
+          faFull.format(m.labels.length) + ' ماه</span>' +
+        (move ? '<div class="banner-move">' + move +
+          '<span class="banner-movetext">نسبت به ماه پیش</span></div>' : '') +
+      '</div>' +
+      '<div class="banner-stats">' +
+        `<div class="bstat"><span class="k">میانگین ماهانه</span>` +
+          `<span class="v">${faFull.format(Math.round(m.average))}</span></div>` +
+        `<div class="bstat"><span class="k">پرکارترین ماه</span>` +
+          `<span class="v">${esc(m.peak)}</span>` +
+          `<span class="s">${faFull.format(m.peak_value)} سفارش</span></div>` +
+        `<div class="bstat"><span class="k">آخرین ماه</span>` +
+          `<span class="v">${faFull.format(m.values[m.values.length - 1])}</span>` +
+          `<span class="s">${esc(m.labels[m.labels.length - 1])}</span></div>` +
+      '</div>' +
+    '</div>' +
+    '<div class="bannerbox"><canvas id="monthlyChart"></canvas></div>' +
+    (caveats.length ? '<p class="banner-foot">' + esc(caveats.join(' ')) + '</p>' : '') +
+  '</section>';
+}
+
+function drawMonthly(m, rep) {
+  destroyMonthly();
+  const canvas = $('monthlyChart');
+  if (!canvas) return;
+  // White, like every other label drawn on a canvas -- see CHART_INK.
+  const muted = CHART_INK, line = cssVarOr('--line', '#33436b');
+  const accent = cssVarOr('--accent', '#E5641D'), peakAt = m.values.indexOf(Math.max(...m.values));
+
+  // A vertical gradient per bar, built against the chart area rather than the
+  // canvas: before the first layout the area has no height, and a gradient
+  // over a zero-height box paints as a flat block.
+  const fill = (ctx, from, to) => {
+    const area = ctx.chart.chartArea;
+    if (!area) return from;
+    const g = ctx.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, from);
+    g.addColorStop(1, to);
+    return g;
+  };
+
+  monthlyChart = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: m.labels,
+      datasets: [{
+        label: 'سفارش',
+        data: m.values,
+        // The busiest month is the one fact people look for, so it is the one
+        // thing given full colour; the rest carry the same hue at half
+        // strength. Colour is doing work here, not decoration.
+        backgroundColor: ctx => ctx.dataIndex === peakAt
+          ? fill(ctx, '#fb923c', 'rgba(249,115,22,.30)')
+          : fill(ctx, 'rgba(249,115,22,.72)', 'rgba(249,115,22,.10)'),
+        hoverBackgroundColor: ctx => fill(ctx, '#fdba74', 'rgba(249,115,22,.35)'),
+        borderRadius: { topLeft: 7, topRight: 7, bottomLeft: 2, bottomRight: 2 },
+        borderSkipped: false,
+        maxBarThickness: 46,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, resizeDelay: 120,
+      animation: reduceMotion ? false : { duration: 520, easing: 'easeOutQuart' },
+      layout: { padding: { top: 10, right: 6, bottom: 0, left: 6 } },
+      // Vertical bars: match on the category axis so the whole column is a
+      // hover target, including the empty space above a short bar.
+      interaction: { mode: 'index', axis: 'x', intersect: false },
+      hover: { mode: 'index', axis: 'x', intersect: false },
+      onClick: (evt, items) => {
+        if (!items.length || !window.filterByMonth) return;
+        window.filterByMonth(m.keys[items[0].index]);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          rtl: true, textDirection: 'rtl',
+          backgroundColor: 'rgba(8,13,26,.95)',
+          borderColor: line, borderWidth: 1,
+          titleColor: CHART_INK, bodyColor: CHART_INK,
+          padding: { x: 13, y: 10 }, cornerRadius: 10, displayColors: false,
+          titleFont: { size: 12.5, weight: '600' }, bodyFont: { size: 14 },
+          callbacks: { label: c => `${faFull.format(c.parsed.y)} سفارش` },
+        },
+      },
+      scales: {
+        x: {
+          // RTL: months read right to left, newest at the left edge.
+          reverse: true, position: 'bottom',
+          grid: { display: false }, border: { color: line },
+          ticks: {
+            color: muted, font: { size: 12.5 }, maxRotation: 0, autoSkipPadding: 12,
+            // The year comes off on a narrow chart.
+            //
+            // Measured on a 390px phone: of five months, only three were
+            // painted -- "خرداد ۱۴۰۵" and "مرداد ۱۴۰۵" were silently dropped
+            // by autoSkip, because "اردیبهشت ۱۴۰۵" is wide and maxRotation is
+            // 0. The year is the same on every visible label, so it is the
+            // part carrying no information, and removing it is what makes all
+            // five fit. The tooltip still names the month in full.
+            callback(v) {
+              const raw = this.getLabelForValue(v);
+              if (this.chart && this.chart.width >= 520) return raw;
+              const sp = raw.lastIndexOf(' ');
+              return sp > 0 ? raw.slice(0, sp) : raw;
+            },
+          },
+        },
+        y: {
+          reverse: false, position: 'right', beginAtZero: true,
+          grid: { color: line, drawTicks: false },
+          border: { display: false },
+          ticks: { color: muted, font: { size: 12 }, padding: 8, maxTicksLimit: 5 },
+        },
+      },
+    },
+  });
+  canvas.style.cursor = 'pointer';
+  void accent;
+}
+
+// ------------------------------------------------- sorting and columns
+//
+// Both are per report and remembered, because the useful arrangement of a
+// twenty-column report is a property of that report and of the person reading
+// it -- not something to rebuild on every visit. Kept in localStorage rather
+// than on the server: it is a display preference, not data, and it should not
+// follow somebody to a different machine where the screen is a different size.
+const prefsKey = id => 'docfind.table.' + id;
+
+function loadPrefs(id) {
+  try { return JSON.parse(localStorage.getItem(prefsKey(id))) || {}; }
+  catch (e) { return {}; }        // private windows and cleared storage
+}
+function savePrefs(id, p) {
+  try { localStorage.setItem(prefsKey(id), JSON.stringify(p)); } catch (e) {}
+}
+
+// Compares two cells for sorting.
+//
+// Numbers sort as numbers and everything else with the Persian collator, so
+// "ب" lands after "الف" rather than by code point. Blanks always sort last,
+// in both directions: an empty cell is missing information, and a column
+// sorted ascending that opens with twenty blanks has buried the answer.
+const collator = new Intl.Collator('fa', { numeric: true, sensitivity: 'base' });
+function compareCells(a, b) {
+  const ea = a === null || a === undefined || String(a).trim() === '';
+  const eb = b === null || b === undefined || String(b).trim() === '';
+  if (ea || eb) return ea && eb ? 0 : (ea ? 1 : -1);
+  const na = asNumber(a), nb = asNumber(b);
+  if (na !== null && nb !== null) return na - nb;
+  return collator.compare(String(a), String(b));
+}
+
+// Reads a cell as a number if it plainly is one, including the formatted money
+// these views return ("€ 30,744.00").
+function asNumber(v) {
+  if (typeof v === 'number') return v;
+  const s = String(v ?? '').replace(/[\s,٬ ]/g, '')
+    .replace(/[۰-۹]/g, d => '۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+    .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+    .replace(/^[€$£¥₽₺﷼]/, '').replace(/(IRR|EUR|USD)$/i, '');
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  return parseFloat(s);
+}
+
+// A «جمع» cell, written the way the query writes the amounts above it.
+const sumFmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
+function render(rep, d) {
+  const st = state[rep.id];
+  const body = $('body');
+  // What actually reached the page, kept for the PDF masthead. Recorded here,
+  // at the moment of drawing, rather than worked out from the DOM later: the
+  // export must describe the rows that are on the sheet, and reading the table
+  // back would describe them only until somebody hides a column.
+  if (st) {
+    st.shown = d.rows.length;
+    st.hasMore = !!d.hasMore;
+  }
+  if (!d.rows.length) {
+    // The .empty component from app.css rather than a bare sentence: a filter
+    // that matches nothing is the state a demo hits most often, and an icon
+    // with a heading reads as "nothing here" instead of as a failure.
+    body.innerHTML = '<div class="empty"><div>' +
+      '<svg class="ic" aria-hidden="true"><use href="#i-filter"/></svg>' +
+      '<b>ردیفی یافت نشد</b>' +
+      'با این فیلترها داده‌ای وجود ندارد؛ بازه زمانی یا فیلترها را تغییر دهید.' +
+      '</div></div>' +
+      '<div class="pager"><span class="count">۰ ردیف &middot; ' +
+      faFull.format(d.tookMs) + ' میلی‌ثانیه</span></div>';
+    return;
+  }
+
+  const prefs = loadPrefs(rep.id);
+  const hidden = new Set(prefs.hidden || []);
+  // Never hide the last column: a table with no columns is not a narrower
+  // table, it is a broken screen.
+  const shown = d.columns.filter(c => !hidden.has(c));
+  const cols = shown.length ? shown : d.columns;
+
+  // Sorting applies to the loaded page. Stated in the pager rather than
+  // implied, because sorting one page of a paged result is not the same as
+  // sorting the report, and a reader who assumes otherwise draws the wrong
+  // conclusion from the top row.
+  let rowData = d.rows.map((row, i) => ({ row, n: (d.page - 1) * d.perPage + i + 1 }));
+  const sortIdx = prefs.sort ? d.columns.indexOf(prefs.sort) : -1;
+  if (sortIdx >= 0) {
+    const dir = prefs.dir === 'desc' ? -1 : 1;
+    rowData = rowData.slice().sort((a, b) => dir * compareCells(a.row[sortIdx], b.row[sortIdx]));
+  }
+
+  // Every sortable column carries an icon, not just the active one. A control
+  // that only appears once you have already used it cannot be discovered:
+  // the dimmed double chevron says "this sorts", and it sharpens into a single
+  // arrow showing the direction once it does.
+  const arrow = c => {
+    if (prefs.sort !== c) return '<span class="sortmark idle" aria-hidden="true">⇅</span>';
+    return `<span class="sortmark on" aria-hidden="true">${prefs.dir === 'desc' ? '↓' : '↑'}</span>`;
+  };
+  const sortState = c => prefs.sort !== c ? 'none' : (prefs.dir === 'desc' ? 'descending' : 'ascending');
+  const head = '<tr><th class="rownum">#</th>' + cols.map(c => {
+    const label = esc((d.labels && d.labels[c]) || c);
+    return `<th aria-sort="${sortState(c)}">` +
+      `<button type="button" class="sortbtn" data-col="${esc(c)}" title="مرتب‌سازی بر پایه ${label}">` +
+      `<span class="lbl">${label}</span>${arrow(c)}</button></th>`;
+  }).join('') + '</tr>';
+
+  const idx = cols.map(c => d.columns.indexOf(c));
+
+  const rows = rowData.map(({ row, n }) =>
+    '<tr>' +
+      '<td class="rownum">' + faFull.format(n) + '</td>' +
+      idx.map(i => {
+        const v = row[i];
+        // The value goes inside a wrapper so the stylesheet can cap how many
+        // lines it wraps onto: a line clamp needs display:-webkit-box, and a
+        // <td> carrying that leaves the table layout and the columns collapse.
+        // The title stays, and now earns its place -- it is the whole value
+        // for a cell the clamp has shortened, rather than a tooltip repeating
+        // text already fully visible.
+        return '<td' + (looksNumeric(v) ? ' class="num"' : '') +
+          ' title="' + esc(v) + '"><span class="cw">' + esc(v) + '</span></td>';
+      }).join('') + '</tr>').join('');
+
+  // «جمع»: the columns the report names with "-- total:", added up over the
+  // rows on screen. A foot row rather than a row from the query, so sorting
+  // leaves it at the bottom, the numbering skips it and the chart never draws
+  // it as one more bar. On a paged result it says it is this page's total.
+  // Written in the cells' own style -- Latin digits with thousands commas.
+  // On a result of more than one page the server sends every row's total
+  // (reporttotals.go), shown as «جمع کل»; without it, this page's.
+  const totals = new Set((rep.total_columns || []).map(c => String(c).toLowerCase()));
+  let foot = '';
+  if (cols.some(c => totals.has(c.toLowerCase()))) {
+    const whole = d.totals && typeof d.totals === 'object' ? d.totals : null;
+    const sums = cols.map((c, k) => !totals.has(c.toLowerCase()) ? null
+      : whole && whole[c.toLowerCase()] != null ? String(whole[c.toLowerCase()])
+      : sumFmt.format(Math.round(rowData.reduce((s, { row }) => s + (asNumber(row[idx[k]]) || 0), 0))));
+    const label = '<b>' + (whole ? 'جمع کل' : d.hasMore || d.page > 1 ? 'جمع همین صفحه' : 'جمع') + '</b>';
+    const at = sums.findIndex(s => s === null);
+    foot = '<tfoot><tr class="sumrow"><td class="rownum">' + (at < 0 ? label : '') + '</td>' +
+      sums.map((s, k) => s !== null
+        ? '<td class="num"><span class="cw">' + esc(s) + '</span></td>'
+        : '<td>' + (k === at ? label : '') + '</td>').join('') +
+      '</tr></tfoot>';
+  }
+
+  const hiddenNote = hidden.size
+    ? `<span class="count" style="margin:0">${faFull.format(hidden.size)} ستون پنهان</span>` : '';
+
+  body.innerHTML =
+    '<div class="tablebar">' +
+      '<button class="btn btn-sm" id="colsBtn" aria-expanded="false">ستون‌ها</button>' +
+      (sortIdx >= 0 ? '<button class="btn btn-sm" id="unsortBtn">حذف مرتب‌سازی</button>' : '') +
+      hiddenNote +
+    '</div>' +
+    '<div class="scroll"><table class="data"><thead>' + head + '</thead><tbody>' + rows + '</tbody>' + foot + '</table></div>' +
+    '<div class="pager">' +
+      '<button class="btn" id="prevBtn"' + (st.page <= 1 ? ' disabled' : '') + '>قبلی</button>' +
+      '<button class="btn" id="nextBtn"' + (d.hasMore ? '' : ' disabled') + '>بعدی</button>' +
+      '<span class="count">صفحه ' + faFull.format(d.page) + ' &middot; ' +
+        faFull.format(d.rows.length) + ' ردیف &middot; ' +
+        faFull.format(d.tookMs) + ' میلی‌ثانیه' +
+        (sortIdx >= 0 ? ' &middot; مرتب‌سازی روی همین صفحه' : '') +
+      '</span>' +
+    '</div>';
+
+  $('prevBtn').addEventListener('click', () => run(rep, st.page - 1, false));
+  $('nextBtn').addEventListener('click', () => run(rep, st.page + 1, false));
+
+  // Three states, cycling: ascending, descending, none. The third matters --
+  // without it there is no way back to the order the query produced, which is
+  // meaningful for reports that already ORDER BY.
+  body.querySelectorAll('.sortbtn').forEach(b => b.addEventListener('click', () => {
+    const c = b.dataset.col;
+    const p = loadPrefs(rep.id);
+    if (p.sort !== c) { p.sort = c; p.dir = 'asc'; }
+    else if (p.dir === 'asc') { p.dir = 'desc'; }
+    else { delete p.sort; delete p.dir; }
+    savePrefs(rep.id, p);
+    render(rep, d);                     // re-render from data already loaded
+  }));
+
+  const unsort = $('unsortBtn');
+  if (unsort) unsort.addEventListener('click', () => {
+    const p = loadPrefs(rep.id);
+    delete p.sort; delete p.dir;
+    savePrefs(rep.id, p);
+    render(rep, d);
+  });
+
+  $('colsBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    toggleColumnMenu(rep, d, hidden);
+  });
+}
+
+// The column picker. A plain list of checkboxes: twenty columns is too many
+// for a row of chips, and the point is to scan names and tick a few.
+function toggleColumnMenu(rep, d, hidden) {
+  const open = document.querySelector('.colmenu');
+  if (open) { open.remove(); $('colsBtn').setAttribute('aria-expanded', 'false'); return; }
+
+  const menu = document.createElement('div');
+  menu.className = 'colmenu';
+  menu.innerHTML =
+    '<div class="colmenu-head">ستون‌های نمایش داده شده</div>' +
+    d.columns.map(c =>
+      `<label><input type="checkbox" data-col="${esc(c)}"${hidden.has(c) ? '' : ' checked'}>` +
+      `<span>${esc((d.labels && d.labels[c]) || c)}</span></label>`).join('') +
+    '<div class="colmenu-foot"><button type="button" class="btn btn-sm" data-all>نمایش همه</button></div>';
+
+  menu.addEventListener('click', e => e.stopPropagation());
+  menu.querySelectorAll('input[data-col]').forEach(cb => cb.addEventListener('change', () => {
+    const p = loadPrefs(rep.id);
+    const set = new Set(p.hidden || []);
+    if (cb.checked) set.delete(cb.dataset.col); else set.add(cb.dataset.col);
+    // Refuse to hide the last one, and say so by putting the tick back.
+    if (set.size >= d.columns.length) { cb.checked = true; return; }
+    p.hidden = [...set];
+    savePrefs(rep.id, p);
+    render(rep, d);
+  }));
+  menu.querySelector('[data-all]').addEventListener('click', () => {
+    const p = loadPrefs(rep.id);
+    delete p.hidden;
+    savePrefs(rep.id, p);
+    render(rep, d);
+  });
+
+  $('colsBtn').setAttribute('aria-expanded', 'true');
+  $('colsBtn').parentElement.appendChild(menu);
+  document.addEventListener('click', function close() {
+    menu.remove();
+    const b = $('colsBtn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', close);
+  }, { once: true });
+}
+
+// Hash routing, so the browser's own Back button returns to the list and a
+// single report can be linked to directly.
+function route() {
+  const id = decodeURIComponent((location.hash || '').replace(/^#\/?/, ''));
+  if (id) showReport(id);
+  else if (id) showReport(id);
+  else showList();
+}
+
+async function init() {
+  try {
+    const meta = await (await api('/api/me')).json();
+    if (meta.auth_enabled && !meta.user) { location.replace('/login?next=/dashboard'); return; }
+    me = meta.user;
+    // The account carries the display preferences; the copy applied before
+    // paint came from this browser's cache, so reconcile them here.
+    if (window.docfindPrefs) window.docfindPrefs.write((me && me.prefs) || null);
+    if (me) $('who').textContent = me.display_name || me.username;
+    buildNav({
+      admin: !!me && me.role === 'admin',
+      user: me ? (me.display_name || me.username) : null,
+      account: me,
+      onSignOut: () => fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
+        .finally(() => location.replace('/login')),
+    });
+    // The settings link is admin-only; buildNav was told the role above and
+    // leaves it out for everybody else. The page and the API check again.
+  } catch (e) { return; }
+
+  let list;
+  try { list = await (await api('/api/reports')).json(); } catch (e) { return; }
+  // No shipped reports: the list says how to add them, and still offers the
+  // builder to whoever holds it.
+  unconfigured = !list.enabled;
+  catalogue = list.reports || [];
+  route();
+}
+
+$('signout').addEventListener('click', () => {
+  fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
+    .finally(() => location.replace('/login'));
+});
+
+// The worker is registered by nav.js, which every page in the app loads.
+init();
+</script>
+</body>
+</html>

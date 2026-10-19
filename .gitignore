@@ -1,0 +1,28 @@
+# build output
+*.exe
+*.test
+*.out
+/dist/
+/docfind-reports
+/reports-server
+
+# configuration and state: never commit these
+.env
+*.env
+!.env.example
+/data/
+*.key
+users.json
+users.snapshot.json
+sessions.json
+token.key
+datasources.json
+customreports.json
+/snapshots/
+/logs/
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

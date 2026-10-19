@@ -1,0 +1,3251 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="/favicon.ico">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#142F40">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="گزارش‌ها">
+<title>ساختن گزارش | گزارش‌ها</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* The widest of the three content widths: this page shows a query beside
+     its result, and a form column would make both unreadable. */
+  body { --page-max: var(--content-wide); }
+
+  main {
+    padding: var(--s4); max-width: var(--content-wide); margin-inline: auto;
+    display: grid; gap: var(--s4); grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Two columns where there is room: the tables on one side, the query and
+     its result on the other. minmax(0, 1fr) on the second so a wide result
+     table scrolls inside its own box instead of pushing the page sideways --
+     the same fix the other three pages needed. */
+  .work { display: grid; gap: var(--s4); grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 1100px) {
+    .work { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+  }
+
+  /* ---- connections ---- */
+  .srclist { display: grid; gap: var(--s2); }
+  .srcrow {
+    display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+    padding: 10px 12px; border-radius: var(--radius);
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+  }
+  .srcrow.on { border-color: var(--accent); background: var(--accent-soft); }
+  .srcrow .nm { font-weight: 650; }
+  .srcrow .sm {
+    font: 500 12px/1.5 var(--font-latin); color: var(--fg-muted);
+    direction: ltr; text-align: left;
+  }
+  .srcrow .eng {
+    font-size: 11.5px; padding: 1px 7px; border-radius: var(--radius-full);
+    background: var(--surface-3); color: var(--fg-muted);
+  }
+  .srcrow .acts { margin-inline-start: auto; display: flex; gap: 6px; }
+
+  /* ---- the schema tree ---- */
+  .schemabox { max-height: 60vh; overflow: auto; overscroll-behavior: contain; }
+  .tbl {
+    padding: 6px 8px; border-radius: var(--radius-sm); cursor: pointer;
+    font: 500 13px/1.5 var(--font-latin); direction: ltr; text-align: left;
+  }
+  .tbl:hover { background: var(--surface-2); }
+  .tbl .k { font-size: 11px; color: var(--fg-faint); }
+  .cols { margin: 2px 0 8px 10px; display: none; }
+  .cols.open { display: block; }
+  .col {
+    display: flex; gap: 8px; padding: 3px 8px; cursor: pointer;
+    font: 500 12px/1.5 var(--font-latin); direction: ltr; text-align: left;
+    border-radius: var(--radius-sm);
+  }
+  .col:hover { background: var(--surface-2); }
+  .col .ty { color: var(--fg-faint); margin-inline-start: auto; }
+
+  /* ---- the editor ---- */
+  /* Latin, monospace, left-to-right. SQL is code: it is written in ASCII, it
+     is read by column position, and setting it in the page's Persian face at
+     the page's direction makes "WHERE a > 1" unreadable. */
+  #sql {
+    width: 100%; min-height: 200px; resize: vertical;
+    font: 400 13.5px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+    /* The query editor sets its own monospace font, so the 16px floor in
+       app.css -- which is written for .input -- does not reach it. On iOS a
+       field under 16px zooms the page in on focus and does not zoom out
+       again, and this is the one field on the page somebody types a lot into.
+       Measured at 13.5px on an emulated iPhone. */
+    direction: ltr; text-align: left; white-space: pre;
+    tab-size: 2; overflow-wrap: normal; overflow-x: auto;
+  }
+  .runbar { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-top: var(--s3); }
+  .runbar .spacer { margin-inline-start: auto; }
+  .hint-sql {
+    margin: var(--s2) 0 0; font-size: 12.5px; color: var(--fg-faint); line-height: 1.7;
+  }
+
+  /* ---- filters ---- */
+  /* One row per @name in the query, and each row is two halves with a rule
+     between them: on the right what the filter IS, which is saved with the
+     report, and on the left the value for THIS run, which is not. The two are
+     side by side rather than in separate panels because on this page the
+     author and the reader are the same administrator, and making them type a
+     filter's name twice in two places to try it would be the kind of interface
+     that gets abandoned. The rule is what keeps "saved" and "not saved"
+     legible. */
+  .params { margin-top: var(--s3); }
+  .prow {
+    display: grid; gap: var(--s2) var(--s3); align-items: end;
+    grid-template-columns: max-content 1fr 1fr;
+    padding: var(--s3) 0; border-block-start: 1px solid var(--line);
+  }
+  .prow:first-of-type { border-block-start: 0; }
+  .prow > label { display: block; font-size: 12px; color: var(--fg-muted); }
+  .prow .input, .prow .select { margin-top: 4px; }
+  /* The name is the query's own text, so it is Latin and left-to-right even
+     in a Persian row -- it has to be recognisable as the same string that
+     appears in the SQL above. */
+  .pname {
+    font: 600 13px/1.6 var(--font-latin); direction: ltr;
+    color: var(--accent); background: var(--accent-soft);
+    padding: 4px var(--s2); border-radius: var(--radius-sm); white-space: nowrap;
+    align-self: center;
+  }
+  .pval {
+    grid-column: 1 / -1; padding-top: var(--s3);
+    border-block-start: 1px dashed var(--line);
+  }
+  .pval > label { display: block; font-size: 12px; color: var(--fg-muted); }
+  /* Every textarea in a filter row, not only the ones in .pval. Without this
+     they fall back to the browser's default ~20-column monospace box, which
+     breaks Persian across lines and leaves the label wrapped around it. */
+  /* Tall enough for three lines plus padding. Three because that is what a
+     short list of options or firms actually is, and a box that hides the third
+     one behind a scrollbar reads as though it did not save. */
+  .prow textarea {
+    width: 100%; min-height: 88px; resize: vertical; margin-top: 4px;
+    font: inherit; line-height: 1.7;
+  }
+  /* The options list is structurally left-to-right: each line is a database
+     VALUE, then "|", then a Persian label. Setting the box LTR keeps the bar
+     between them and lets bidi handle the Persian half as its own run --
+     whereas in an RTL box the separator jumps to the wrong side of the label. */
+  .prow textarea[data-opts] {
+    direction: ltr; text-align: left;
+    font-family: var(--font-latin);
+  }
+  .phint { margin: var(--s2) 0 0; font-size: 12px; color: var(--fg-faint); line-height: 1.7; }
+  /* A filter the query no longer mentions. Kept rather than deleted -- the
+     person may be mid-edit -- but it has to look inert, or they will fill it
+     in and wonder why nothing changed. */
+  .prow.punused { opacity: .55; }
+  .prow.punused .pname { color: var(--fg-faint); background: var(--surface-2); }
+  .pnote {
+    grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--warn-ink);
+  }
+  @media (max-width: 720px) {
+    .prow { grid-template-columns: 1fr; }
+  }
+
+  /* ---- the chart ---- */
+  /* Above the table, not below it. The same decision as the reports page,
+     made for the same reason: the chart is the answer and the table is the
+     working, so a reader who scrolls to the figures first should meet the
+     shape of them before the rows. */
+  .chartbox { margin: var(--s4) 0 0; }
+  /* A fixed height, so a chart of thirty bars is a chart you can see all of
+     rather than a page you scroll through one bar at a time. The reports page
+     learned this the hard way -- thirteen growing charts made it 15,908px
+     tall -- so this box never grows and the canvas fits inside it. */
+  .chartwin {
+    position: relative; height: 340px;
+    padding: var(--s3); background: var(--surface-2);
+    border: 1px solid var(--line-soft); border-radius: var(--radius);
+  }
+  .chartwin canvas { display: block; }
+  .chartfoot {
+    margin: var(--s2) 0 0; font-size: 12px; color: var(--fg-faint); line-height: 1.7;
+  }
+  /* What the chart could not read. Never silent: a column of "۱٫۲۰۰ ریال"
+     that parses as nothing would otherwise draw an empty chart and look like
+     a bug in the program rather than a fact about the column. */
+  .chartwarn {
+    margin: var(--s2) 0 0; padding: 8px 11px; font-size: 12px; line-height: 1.7;
+    color: var(--warn-ink); background: var(--warn-bg);
+    border-radius: var(--radius-sm);
+  }
+  /* Aligned to the TOP, not the bottom. The value-columns box is a list and
+     so much taller than the single-line controls beside it; bottom alignment
+     made it grow upward out of the row and collide with the panel heading. */
+  .crow {
+    display: grid; gap: var(--s2) var(--s3); align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    margin-top: var(--s3);
+  }
+  .crow > label { display: block; font-size: 12px; color: var(--fg-muted); }
+  .crow .input, .crow .select { margin-top: 4px; }
+  /* The value columns are a multiple-selection list rather than checkboxes:
+     the column count is whatever the query returned, and forty checkboxes is
+     not a control. Sized to show several at once, because one visible row
+     hides the fact that it is a list. */
+  /* No chevron and no start padding: .select paints a dropdown arrow, which
+     inside a multi-line list box floats over the options and points at
+     nothing -- the control does not drop down. */
+  .crow select[multiple] {
+    height: 8.5rem; padding: 6px; cursor: default;
+    background-image: none; padding-inline-start: 6px;
+  }
+  /* Column names come from somebody else's database, so they are Latin and
+     read left to right even inside this Persian panel. */
+  .crow select option, .crow select[multiple] option {
+    direction: ltr; text-align: left; font-family: var(--font-latin);
+  }
+
+  /* ---- the chart gallery ---- */
+  /* Tiles showing each type drawn from THIS result, rather than a dropdown of
+     names. Somebody choosing a chart is choosing how their data will look,
+     and a list of words makes them imagine it; twelve small pictures of their
+     own numbers makes them see it. The previews are drawn by the same
+     function as the real chart, so a tile cannot promise a different picture
+     from the one that follows. */
+  .gallery {
+    display: grid; gap: var(--s2); margin-top: var(--s3);
+    grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  }
+  .gtile {
+    position: relative; padding: 6px 6px 4px; cursor: pointer; text-align: center;
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-radius: var(--radius); color: var(--fg-muted);
+    font: 500 11.5px/1.5 var(--font); transition: border-color .12s, background .12s;
+  }
+  .gtile:hover { border-color: var(--accent-hover); color: var(--fg); }
+  .gtile.on {
+    border-color: var(--accent); background: var(--accent-soft); color: var(--fg);
+  }
+  .gtile.on::after {
+    content: '✓'; position: absolute; inset-block-start: 4px; inset-inline-end: 6px;
+    color: var(--accent); font-size: 12px; font-weight: 700;
+  }
+  /* A type this result cannot produce. Dimmed and unclickable, with the
+     reason in its place -- "why can I not choose a scatter" answered before
+     it is asked, rather than by an error after. */
+  .gtile.off { opacity: .45; cursor: not-allowed; }
+  .gtile.off:hover { border-color: var(--line-soft); }
+  /* The canvas gets its size from a container of a FIXED height, not from a
+     height of its own.
+     Chart.js in responsive mode sizes the canvas to its parent and then the
+     parent to its contents if it can -- so a canvas with height:74px inside a
+     tile with no height grew to 360px on the first draw, each feeding the
+     other. The same feedback that once froze the reports page, and the same
+     fix: give the box a height and let the canvas fill it. */
+  .gcv { position: relative; height: 74px; }
+  .gtile canvas { display: block; }
+  .gtile .gwhy {
+    display: flex; align-items: center; justify-content: center;
+    height: 74px; padding: 0 4px; font-size: 10.5px; color: var(--fg-faint);
+  }
+  .gtile .gname { display: block; margin-top: 3px; }
+  /* The recommendation, marked on its tile so the suggestion sits on the
+     thing it suggests rather than in a sentence somewhere else. */
+  .gtile .gstar {
+    position: absolute; inset-block-start: 4px; inset-inline-start: 6px;
+    font-size: 11px; color: var(--accent-lift);
+  }
+  .grec {
+    margin: var(--s3) 0 0; font-size: 12.5px; color: var(--fg-muted); line-height: 1.7;
+  }
+  .grec b { color: var(--fg); }
+
+  /* ---- column headings ---- */
+  /* A grid of one row per column. Dense on purpose: a query returning thirty
+     columns has to be scannable, and the common case is reading down the
+     "what it will be called" column and touching nothing. */
+  .colgrid {
+    display: grid; gap: 0; margin-top: var(--s3);
+    grid-template-columns: minmax(8rem, 1fr) minmax(9rem, 1.4fr) max-content max-content max-content;
+    align-items: center;
+  }
+  .colgrid > * { padding: 6px var(--s2); border-block-start: 1px solid var(--line-soft); }
+  .colgrid > .colhead {
+    border-block-start: 0; padding-block-end: var(--s2);
+    font-size: 11.5px; font-weight: 600; color: var(--fg-faint);
+  }
+  /* The database's own name, so it is Latin and left-to-right even here. */
+  .colname {
+    font: 500 12.5px/1.6 var(--font-latin); direction: ltr; text-align: left;
+    color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .colgrid input[type="text"] { width: 100%; }
+  /* Where the heading came from. Worth saying: "from the query" and
+     "nothing names this column" look identical in a table of headings, and they
+     need different actions from the reader. */
+  .colsrc { font-size: 11px; color: var(--fg-faint); white-space: nowrap; }
+  .colsrc.none { color: var(--warn-ink); }
+  .colgrid .colhide { text-align: center; }
+  @media (max-width: 720px) {
+    .colgrid { grid-template-columns: 1fr max-content; }
+    .colgrid > .colhead:nth-child(n+3) { display: none; }
+    .colgrid > .colsrc { display: none; }
+  }
+
+  /* ---- master and detail ---- */
+  /* A master row that can be opened says so before it is clicked: the cursor
+     changes and a marker sits in the row-number cell, because a table whose
+     rows are secretly clickable is a table nobody clicks. */
+  table.data tr.openable { cursor: pointer; }
+  table.data tr.openable:hover > td { background: var(--accent-soft); }
+  table.data tr.openable .rownum::after {
+    content: '▸'; margin-inline-start: 5px; color: var(--accent); font-size: 11px;
+  }
+  table.data tr.openable.open .rownum::after { content: '▾'; }
+  /* The expansion. Indented by a left border in the reading direction, so it
+     reads as belonging to the row above rather than as another master row. */
+  tr.detailrow > td {
+    padding: 0 !important;
+    border-inline-start: 3px solid var(--accent);
+    background: var(--surface-2);
+  }
+  .detailwrap { padding: var(--s3); }
+  .detailwrap h5 {
+    margin: 0 0 var(--s2); font-size: 12.5px; font-weight: 600; color: var(--fg-muted);
+  }
+  .detailwrap table.data { font-size: 12.5px; }
+  .detailwrap .empty { padding: var(--s3) 0; }
+  /* The detail query is code, like the main one. */
+  #detailSQL {
+    width: 100%; min-height: 110px; resize: vertical; margin-top: 4px;
+    font: 400 13px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace;
+    /* Same iOS floor as #sql: its own monospace font shorthand overrides the
+       16px rule that .input would otherwise have given it. */
+    direction: ltr; text-align: left; white-space: pre;
+    tab-size: 2; overflow-wrap: normal; overflow-x: auto;
+  }
+
+  /* Both query editors at the iOS zoom threshold, on a touch device.
+     Below 16px, Safari zooms the page in when the field takes focus and does
+     not zoom out when it leaves -- and these are the two fields on this page
+     somebody types into at length.
+     any-pointer, not pointer: an iPad with a Magic Keyboard reports a FINE
+     primary pointer and is still iOS Safari.
+     Placed AFTER both definitions on purpose. Each sets its size through a
+     `font:` shorthand of equal specificity, so an identical rule written
+     above them loses on source order and silently does nothing -- which is
+     what the first version of this did, and the measurement showed
+     #detailSQL still sitting at 13px while #sql had moved. */
+  @media (any-pointer: coarse) {
+    #sql, #detailSQL { font-size: 16px; }
+  }
+
+  /* The result. Its own scroll box, so a forty-column query does not widen
+     the page.
+     The wrapper is app.css's .table-scroll, not a .scroll of this page's own
+     invention -- which is what it was, and nothing styled it. The result had
+     never actually scrolled; it simply had not been wide enough to notice
+     until the headings arrived and a SELECT * over twelve columns pushed the
+     whole page 600px sideways. */
+  .resbox { margin-top: var(--s4); min-width: 0; }
+  /* And the card has to be allowed to be narrower than its own content, or
+     the scroll box has no definite width to scroll inside and the table
+     widens its ancestors instead. */
+  .work > .card, .work > .card > .card-body { min-width: 0; }
+  .resmeta {
+    display: flex; gap: var(--s3); flex-wrap: wrap; align-items: baseline;
+    font-size: 12.5px; color: var(--fg-muted); margin-bottom: var(--s2);
+  }
+  .resmeta b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  /* Values are data from another system: Latin numbers, left-aligned, so a
+     reference number reads the same here as in the database client. */
+  table.data td .v { direction: ltr; display: inline-block; text-align: left; }
+  table.data th .t {
+    display: block; font: 500 10.5px/1.4 var(--font-latin);
+    color: var(--fg-faint); text-transform: uppercase; letter-spacing: .04em;
+  }
+
+  /* ---- saved reports ---- */
+  .repgrid { display: grid; gap: var(--s3); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .repcard {
+    padding: 13px 15px; border-radius: var(--radius-lg);
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-inline-start: 3px solid var(--accent);
+  }
+  .repcard h3 { margin: 0 0 4px; font-size: 15px; }
+  .repcard p { margin: 0 0 8px; font-size: 13px; color: var(--fg-muted); line-height: 1.7; }
+  .repcard .meta { font-size: 11.5px; color: var(--fg-faint); }
+  .repcard .acts { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .err-sql {
+    margin-top: var(--s3); padding: 10px 13px; border-radius: var(--radius);
+    background: var(--bad-bg); border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    font-size: 13.5px; line-height: 1.75; color: var(--fg);
+  }
+  /* The database's own words, kept in its own direction so a quoted column
+     name is readable. */
+  .err-sql code {
+    display: block; margin-top: 6px; direction: ltr; text-align: left;
+    font: 400 12.5px/1.6 ui-monospace, Consolas, monospace; color: var(--bad-ink);
+  }
+</style>
+</head>
+<body>
+<header class="appbar">
+  <!-- Mark and visible title removed from the header, as on every other
+       page. The heading stays, said rather than shown -- see .sr-only. -->
+  <h1 class="sr-only">ساختن گزارش</h1>
+  <span class="spacer"></span>
+  <span id="who" class="hint collapses" style="margin:0"></span>
+  <button class="btn btn-ghost btn-sm collapses" id="signout">خروج</button>
+</header>
+
+<script src="/nav.js"></script>
+<main id="main">
+  <div class="card"><div class="skel"><i></i><i style="width:78%"></i><i style="width:88%"></i></div></div>
+</main>
+
+<!-- ============================================================ templates -->
+
+<template id="tplBuilder">
+  <!-- Connections. First, because nothing else on the page works without
+       one, and an administrator arriving here for the first time has none. -->
+  <section class="card">
+    <h2 class="card-head">
+      <span>اتصال‌های پایگاه داده</span>
+      <span class="spacer" style="margin-inline-start:auto"></span>
+      <button class="btn btn-sm" id="newSrcBtn">اتصال تازه</button>
+    </h2>
+    <div class="card-body">
+      <div class="srclist" id="srcList"></div>
+
+      <form id="srcForm" hidden style="margin-top:var(--s4)">
+        <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--s3)">
+          <label>نام
+            <input class="input" id="srcName" required maxlength="80"
+                   placeholder="مثلاً پایگاه دادهٔ فروش">
+          </label>
+          <label>موتور
+            <select class="select" id="srcDriver"></select>
+          </label>
+        </div>
+        <label style="display:block;margin-top:var(--s3)">رشتهٔ اتصال
+          <input class="input" id="srcDSN" autocomplete="off" spellcheck="false"
+                 style="direction:ltr;text-align:left;font-family:var(--font-latin)">
+        </label>
+        <p class="hint" id="srcExample" style="direction:ltr;text-align:left"></p>
+        <!-- Said once, here, where the decision is made. A read-only account
+             is the measure that actually protects these databases; the
+             SELECT-only check in the application is the second line, not the
+             first. -->
+        <p class="hint-sql">
+          از حسابی استفاده کنید که فقط اجازهٔ خواندن دارد. این برنامه هر چیزی
+          جز <code>SELECT</code> را رد می‌کند، اما آن بررسی لایهٔ دوم است؛
+          لایهٔ اول دسترسی همان حساب در پایگاه داده است.
+        </p>
+        <label style="display:block;margin-top:var(--s3)">یادداشت (اختیاری)
+          <input class="input" id="srcNote" maxlength="200"
+                 placeholder="این سرور برای چیست؟">
+        </label>
+        <div class="runbar">
+          <button class="btn btn-primary" type="submit" id="srcSave">ذخیره</button>
+          <button class="btn" type="button" id="srcTest">آزمودن اتصال</button>
+          <button class="btn btn-ghost" type="button" id="srcCancel">لغو</button>
+          <span class="spacer"></span>
+          <span class="hint" id="srcMsg" style="margin:0"></span>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <div class="work">
+    <!-- What is in there. Without this the only way to write a query is to
+         already know every table name. -->
+    <section class="card">
+      <h2 class="card-head">
+        <span>جدول‌ها</span>
+        <span class="spacer" style="margin-inline-start:auto"></span>
+        <button class="btn btn-sm" id="schemaBtn">خواندن</button>
+      </h2>
+      <div class="card-body">
+        <div class="search" style="margin-bottom:var(--s3)">
+          <svg class="ic-search" aria-hidden="true"><use href="#i-search"/></svg>
+          <!-- A placeholder is not a label: it disappears the moment somebody
+               types, and a screen reader announces this as "search" with no
+               indication of what is being searched. -->
+          <span class="ring"><input class="input" id="schemaFind" type="search"
+                 aria-label="جستجوی جدول یا ستون"
+                 placeholder="جستجوی جدول یا ستون" autocomplete="off"></span>
+        </div>
+        <div class="schemabox" id="schemaBox">
+          <p class="hint" style="margin:0">یک اتصال انتخاب کنید و «خواندن» را بزنید.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- The query and its answer. -->
+    <section class="card">
+      <h2 class="card-head">
+        <span>پرس‌وجو</span>
+        <span class="spacer" style="margin-inline-start:auto"></span>
+        <!-- Named for a screen reader: the heading beside it says "query", not
+             which connection this chooses, and a control read on its own
+             announced only "combo box". -->
+        <select class="select" id="runSource" style="width:auto;min-width:11rem"
+                aria-label="اتصال پایگاه داده"></select>
+      </h2>
+      <div class="card-body">
+        <!-- The heading above this card says "پرس‌وجو", but a heading is not a
+             label: read on its own this announced only "text area". It is the
+             most important control on the page. -->
+        <textarea id="sql" spellcheck="false" autocomplete="off"
+                  aria-label="متن پرس‌وجوی SQL"
+                  placeholder="SELECT ..."></textarea>
+        <p class="hint-sql">
+          فقط یک دستور <code>SELECT</code> (یا <code>WITH</code>). برای پیوند
+          چند جدول، همان <code>JOIN</code> را در همین پرس‌وجو بنویسید.
+          <kbd>Ctrl</kbd>+<kbd>Enter</kbd> اجرا می‌کند.
+          برای فیلتر، در پرس‌وجو <code>@نام</code> بنویسید، مثل
+          <code>WHERE STATUS LIKE @status</code>، و بعد پایین همین کارت آن را
+          تعریف کنید.
+        </p>
+
+        <!-- The filters. Empty until the query names one, because an empty
+             panel with a heading on a page that already has five of them is
+             just noise. -->
+        <div id="paramsWrap" hidden>
+          <div class="runbar" style="margin-top:var(--s4)">
+            <b style="font-size:13px">فیلترها</b>
+            <span class="hint" id="paramsCount" style="margin:0"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" type="button" id="paramsSync">
+              خواندن از پرس‌وجو
+            </button>
+          </div>
+          <div class="params" id="paramsBox"></div>
+        </div>
+
+        <div class="runbar">
+          <button class="btn btn-primary" id="runBtn">اجرا</button>
+          <button class="btn" id="saveBtn">ذخیره به‌عنوان گزارش</button>
+          <span class="spacer"></span>
+          <label class="hint" style="margin:0">ردیف در صفحه
+            <!-- A minimum width, because "auto" sizes to the Latin digits and
+                 the Persian face substitutes wider glyphs for them, which
+                 clipped the leading digit of 100. -->
+            <select class="select" id="perPage"
+                    style="width:auto;min-width:5.5rem;display:inline-block">
+              <option>50</option><option selected>100</option><option>250</option><option>500</option>
+            </select>
+          </label>
+        </div>
+        <div id="sqlErr"></div>
+
+        <!-- The chart settings. Hidden until a query has run, because every
+             control in here is a choice between the columns that came back --
+             offering them before there is a result means offering an empty
+             list, which reads as a broken feature rather than a sequence. -->
+        <div id="chartWrap" hidden>
+          <div class="runbar" style="margin-top:var(--s4)">
+            <b style="font-size:13px">نمودار</b>
+            <span class="hint" id="chartState" style="margin:0"></span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" type="button" id="chartNone">بدون نمودار</button>
+          </div>
+          <p class="grec" id="chartRec"></p>
+          <div class="gallery" id="chartGallery"></div>
+          <div class="crow" id="chartRow"></div>
+          <p class="phint" id="chartHint"></p>
+        </div>
+
+        <!-- What the columns are called. Hidden until a query has run, since
+             every row in here is one column of the result. -->
+        <div id="colsWrap" hidden>
+          <div class="runbar" style="margin-top:var(--s4)">
+            <b style="font-size:13px">نام ستون‌ها</b>
+            <span class="hint" id="colsState" style="margin:0"></span>
+          </div>
+          <div class="colgrid" id="colsGrid"></div>
+          <p class="phint">
+            اگر پرس‌وجو خودش با <code>AS «عنوان»</code> نامی گذاشته باشد، همان نام
+            می‌ماند. برای ستون‌های دیگر عنوانی بنویسید تا خواننده به‌جای نام فنی
+            ستون، آن را ببیند. ستون پنهان در جدول و فایل CSV نمی‌آید، اما مقدارش
+            برای نمودار و جزئیات همچنان در دسترس است.
+          </p>
+        </div>
+
+        <!-- Master and detail: a second query, run for one row of the first.
+             Hidden until a query has run, because the key has to be chosen
+             from the columns that came back. -->
+        <div id="detailWrap" hidden>
+          <div class="runbar" style="margin-top:var(--s4)">
+            <b style="font-size:13px">جزئیات هر ردیف</b>
+            <span class="hint" id="detailState" style="margin:0"></span>
+          </div>
+          <div class="crow" id="detailRow"></div>
+          <label style="display:block;margin-top:var(--s3)">پرس‌وجوی جزئیات (باید
+            <code>@key</code> را به‌کار ببرد)
+            <textarea class="input" id="detailSQL" spellcheck="false" autocomplete="off"
+                      placeholder="SELECT ... WHERE order_no = @key"></textarea>
+          </label>
+          <p class="phint">
+            یک <code>SELECT</code> دیگر که برای ردیفِ کلیک‌شده اجرا می‌شود.
+            <code>@key</code> مقدار «ستون کلید» همان ردیف است. فیلترهای همین
+            گزارش هم در دسترس‌اند. خالی گذاشتن یعنی بدون جزئیات.
+          </p>
+        </div>
+
+        <!-- The drawing, above the table. -->
+        <div class="chartbox" id="chartBox" hidden>
+          <div class="chartwin"><canvas id="chartCanvas"></canvas></div>
+          <p class="chartfoot" id="chartFoot"></p>
+          <p class="chartwarn" id="chartWarn" hidden></p>
+        </div>
+
+        <div class="resbox" id="resBox"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Saved. -->
+  <section class="card">
+    <h2 class="card-head"><span>گزارش‌های ذخیره‌شده</span></h2>
+    <div class="card-body"><div class="repgrid" id="repGrid"></div></div>
+  </section>
+</template>
+
+<!-- The save dialog: a title and a description, because a list of thirty
+     queries called "query" is not a list anybody can use. -->
+<dialog class="sheet" id="saveSheet" aria-labelledby="saveSheetTitle">
+  <div class="sheet-head">
+    <h3 id="saveSheetTitle">ذخیره به‌عنوان گزارش</h3>
+    <span class="spacer" style="margin-inline-start:auto"></span>
+    <button class="gbtn" type="button" data-close aria-label="بستن">
+      <svg class="ic" aria-hidden="true"><use href="#i-x"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <form id="saveForm">
+      <label style="display:block">عنوان
+        <input class="input" id="repTitle" required maxlength="120">
+      </label>
+      <label style="display:block;margin-top:var(--s3)">توضیح (اختیاری)
+        <input class="input" id="repDesc" maxlength="300"
+               placeholder="این گزارش به چه پرسشی جواب می‌دهد؟">
+      </label>
+      <div class="runbar">
+        <button class="btn btn-primary" type="submit">ذخیره</button>
+        <button class="btn btn-ghost" type="button" data-close>لغو</button>
+        <span class="spacer"></span>
+        <span class="hint" id="saveMsg" style="margin:0"></span>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script>
+'use strict';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const faNum = new Intl.NumberFormat('fa-IR');
+// Persian digits with NO grouping and nothing else touched, for strings that
+// are not quantities: a year, or a "1405/03" period label.
+//
+// faNum is wrong for both. It groups, so the year 1404 comes out "۱٬۴۰۴", and
+// it cannot take a label with a slash in it at all.
+const faDigits = s => String(s ?? '').replace(/[0-9]/g, c =>
+  '۰۱۲۳۴۵۶۷۸۹'[+c]);
+
+let me = null;
+let DRIVERS = [];
+let SOURCES = [];
+let SCHEMA = [];       // the tables of the currently read connection
+let SCHEMA_FOR = '';   // which connection SCHEMA belongs to
+let EDITING = null;    // the saved report being edited, or null for a new one
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    ...opts,
+  });
+  if (r.status === 401) { location.replace('/login?next=/builder'); throw new Error('unauthenticated'); }
+  return r;
+}
+
+// The error from a failed builder call.
+//
+// These routes answer with the database's own complaint on purpose -- the
+// reader is the author, mid-edit, and "unknown column 'x' in field list" is
+// the most useful sentence available. So it is shown, not swallowed.
+async function errorOf(r) {
+  try {
+    const d = await r.json();
+    return d.error || ('خطای ' + r.status);
+  } catch (_) { return 'خطای ' + r.status; }
+}
+
+// ------------------------------------------------------------- connections
+
+function renderSources() {
+  const box = $('srcList');
+  if (!SOURCES.length) {
+    box.innerHTML = '<p class="hint" style="margin:0">' +
+      'هنوز اتصالی ثبت نشده است. با «اتصال تازه» شروع کنید.</p>';
+  } else {
+    box.innerHTML = SOURCES.map(s => `
+      <div class="srcrow" data-id="${esc(s.id)}">
+        <span class="nm">${esc(s.name)}</span>
+        <span class="eng">${esc(s.driver_label)}</span>
+        <span class="sm">${esc(s.summary)}</span>
+        ${s.note ? `<span class="hint" style="margin:0">${esc(s.note)}</span>` : ''}
+        <span class="acts">
+          <button class="btn btn-sm" data-test="${esc(s.id)}">آزمودن</button>
+          <button class="btn btn-sm" data-edit="${esc(s.id)}">ویرایش</button>
+          <button class="btn btn-sm btn-ghost" data-del="${esc(s.id)}">حذف</button>
+        </span>
+      </div>`).join('');
+  }
+
+  // The run selector and the schema both follow this list.
+  const sel = $('runSource');
+  const keep = sel.value;
+  sel.innerHTML = SOURCES.length
+    ? SOURCES.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')
+    : '<option value="">اتصالی نیست</option>';
+  if (keep && SOURCES.some(s => s.id === keep)) sel.value = keep;
+}
+
+function fillDriverSelect() {
+  $('srcDriver').innerHTML = DRIVERS.map(d =>
+    `<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('');
+  showExample();
+}
+
+function showExample() {
+  const d = DRIVERS.find(x => x.id === $('srcDriver').value);
+  $('srcExample').textContent = d ? d.example : '';
+}
+
+function openSourceForm(src) {
+  $('srcForm').hidden = false;
+  $('srcForm').dataset.id = src ? src.id : '';
+  $('srcName').value = src ? src.name : '';
+  $('srcNote').value = src ? (src.note || '') : '';
+  $('srcDriver').value = src ? src.driver : (DRIVERS[0] && DRIVERS[0].id) || '';
+  // Never prefilled, because the server does not send it back. The
+  // placeholder says what leaving it empty means, which is the one thing
+  // somebody editing a name needs to know.
+  $('srcDSN').value = '';
+  $('srcDSN').placeholder = src
+    ? 'برای نگه‌داشتن رشتهٔ فعلی خالی بگذارید'
+    : '';
+  $('srcDSN').required = !src;
+  showExample();
+  $('srcMsg').textContent = '';
+  $('srcName').focus();
+}
+
+async function loadSources() {
+  const d = await (await api('/api/builder/sources')).json();
+  DRIVERS = d.drivers || [];
+  SOURCES = d.sources || [];
+  fillDriverSelect();
+  renderSources();
+}
+
+// ----------------------------------------------------------------- schema
+
+function renderSchema() {
+  const box = $('schemaBox');
+  const q = $('schemaFind').value.trim().toLowerCase();
+  if (!SCHEMA.length) {
+    box.innerHTML = '<p class="hint" style="margin:0">' +
+      (SCHEMA_FOR ? 'این اتصال جدولی نشان نداد.' :
+        'یک اتصال انتخاب کنید و «خواندن» را بزنید.') + '</p>';
+    return;
+  }
+  // Filtering matches a column name as well as a table name: somebody
+  // looking for "CUSTOMER_NAME" does not know which table it is in, which is the
+  // whole reason they are searching.
+  const shown = q
+    ? SCHEMA.filter(t =>
+        (t.schema + '.' + t.name).toLowerCase().includes(q) ||
+        (t.columns || []).some(c => c.name.toLowerCase().includes(q)))
+    : SCHEMA;
+
+  box.innerHTML = shown.slice(0, 400).map((t, i) => {
+    const full = t.schema ? t.schema + '.' + t.name : t.name;
+    const cols = (t.columns || []).map(c => `
+      <div class="col" data-insert="${esc(c.name)}">
+        <span>${esc(c.name)}</span>
+        <span class="ty">${esc(c.type)}${c.nullable ? '' : ' •'}</span>
+      </div>`).join('');
+    return `<div>
+        <div class="tbl" data-toggle="${i}" data-insert="${esc(full)}">
+          ${esc(full)} <span class="k">${t.kind === 'view' ? 'view' : ''}
+          ${faNum.format((t.columns || []).length)}</span>
+        </div>
+        <div class="cols" data-cols="${i}">${cols}</div>
+      </div>`;
+  }).join('') + (shown.length > 400
+    ? `<p class="hint">${faNum.format(shown.length - 400)} جدول دیگر هم هست؛ جست‌وجو کنید.</p>` : '');
+}
+
+async function loadSchema() {
+  const id = $('runSource').value;
+  if (!id) { toast('اول یک اتصال بسازید.', 'bad'); return; }
+  const btn = $('schemaBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/builder/schema?source=' + encodeURIComponent(id));
+    if (!r.ok) { toast(await errorOf(r), 'bad'); return; }
+    const d = await r.json();
+    SCHEMA = d.tables || [];
+    SCHEMA_FOR = id;
+    renderSchema();
+  } finally { btn.disabled = false; }
+}
+
+// Insert at the cursor rather than appending.
+//
+// Somebody clicks a column name while the caret is inside a SELECT list, and
+// appending it to the end of the query would be useless -- they would have to
+// cut and paste it to where they were.
+function insertAtCursor(text) {
+  const el = $('sql');
+  const s = el.selectionStart ?? el.value.length;
+  const e = el.selectionEnd ?? s;
+  el.value = el.value.slice(0, s) + text + el.value.slice(e);
+  const at = s + text.length;
+  el.setSelectionRange(at, at);
+  el.focus();
+}
+
+// ---------------------------------------------------------------- filters
+
+// The filter types, fetched from the server rather than listed here.
+//
+// One list, on the server, because the server is what refuses a type it
+// cannot run. A copy in this file would drift the first time one is added,
+// and the symptom would be an option that saves and then fails.
+let KINDS = [];
+
+// PARAMS is the declaration -- what each filter IS. Saved with the report.
+// The values people type are read out of the DOM at the moment of a run, not
+// held here: a value belongs to one run, not to the report.
+let PARAMS = [];
+
+// USED_NAMES is what the server's scanner found in the query. Kept separate
+// from PARAMS so a declaration can outlive an edit to the SQL.
+let USED_NAMES = [];
+
+const kindOf = id => KINDS.find(k => k.id === id) || KINDS[0] || { id: 'text', label: 'متن', hint: '' };
+
+// sqlServerSelected says whether the chosen connection is the engine that
+// cannot do REGEXP, so a type it would refuse is offered disabled and with a
+// reason rather than accepted and then rejected on save.
+function sqlServerSelected() {
+  const src = SOURCES.find(s => s.id === $('runSource').value);
+  return !!src && src.driver === 'sqlserver';
+}
+
+function paramRow(p, i, used) {
+  const k = kindOf(p.kind);
+  const mssql = sqlServerSelected();
+  const kindOpts = KINDS.map(x => {
+    const off = x.mysql_only && mssql;
+    return `<option value="${esc(x.id)}"${x.id === p.kind ? ' selected' : ''}` +
+      `${off ? ' disabled' : ''}>${esc(x.label)}${off ? ' (فقط MySQL)' : ''}</option>`;
+  }).join('');
+
+  // The value control follows the type, because that is the whole difference
+  // between these types from the reader's side: a list to pick from, several
+  // lines, or one box.
+  let valCtl;
+  if (p.kind === 'choice') {
+    valCtl = `<select class="select" data-val="${i}">
+        <option value="">همه</option>
+        ${(p.options || []).map(o =>
+          `<option value="${esc(o.value)}">${esc(o.label || o.value)}</option>`).join('')}
+      </select>`;
+  } else if (p.kind === 'anyof') {
+    valCtl = `<textarea class="input" data-val="${i}" spellcheck="false"
+        placeholder="هر مقدار در یک خط"></textarea>`;
+  } else if (p.kind === 'date' && p.calendar !== 'jalali') {
+    valCtl = `<input class="input" type="date" data-val="${i}">`;
+  } else if (p.kind === 'date') {
+    valCtl = `<input class="input" data-val="${i}" placeholder="۱۴۰۴/۰۶/۳۱"
+        inputmode="numeric" autocomplete="off">`;
+  } else {
+    // A box that completes from the column behind it, where the report says
+    // which column that is. A native datalist rather than a custom popup:
+    // it works with the keyboard, on a phone, and with a screen reader
+    // without any of that being reimplemented here.
+    const list = p.suggestable ? ` list="sug${i}"` : '';
+    valCtl = `<input class="input" data-val="${i}" autocomplete="off"${list}
+        placeholder="${p.kind === 'list' ? 'مثل ۱,۲,۳' : 'خالی = بدون فیلتر'}">` +
+      (p.suggestable ? `<datalist id="sug${i}"></datalist>` : '');
+  }
+
+  return `<div class="prow${used ? '' : ' punused'}" data-row="${i}">
+    <span class="pname">@${esc(p.name)}</span>
+    <label>عنوانی که خواننده می‌بیند
+      <input class="input" data-label="${i}" maxlength="80" value="${esc(p.label || '')}">
+    </label>
+    <label>نوع
+      <select class="select" data-kind="${i}">${kindOpts}</select>
+    </label>
+    ${p.kind === 'date' ? `<label>تقویم
+      <select class="select" data-cal="${i}">
+        <option value="gregorian"${p.calendar !== 'jalali' ? ' selected' : ''}>میلادی (ستون تاریخ واقعی)</option>
+        <option value="jalali"${p.calendar === 'jalali' ? ' selected' : ''}>شمسی (ستون متنی)</option>
+      </select></label>` : ''}
+    ${p.kind === 'choice' ? `<div style="grid-column:2 / -1">
+      <div class="runbar" style="margin-top:0">
+        <span class="hint" style="margin:0">گزینه‌ها: هر خط یک گزینه</span>
+        <span class="spacer"></span>
+        <!-- The whole point of "no coding": the values are already in the
+             result on screen, so offer to read them out rather than asking
+             somebody to type four statuses they can see above them. -->
+        <select class="select" data-fillfrom="${i}" style="width:auto;min-width:9rem">
+          <option value="">پر کردن از ستون…</option>
+          ${LAST_RESULT ? columnOptions(LAST_RESULT, '', '') : ''}
+        </select>
+      </div>
+      <textarea class="input" data-opts="${i}" spellcheck="false" placeholder="TO_DO|در جریان"
+        >${esc((p.options || []).map(o =>
+          o.label && o.label !== o.value ? o.value + '|' + o.label : o.value).join('\n'))}</textarea>
+    </div>` : ''}
+    <label style="grid-column:2 / -1">پیش‌فرض
+      <input class="input" data-def="${i}" value="${esc(p.default || '')}"
+             placeholder="اگر خواننده چیزی نگذارد، این به‌کار می‌رود">
+    </label>
+    ${p.kind === 'choice' || p.kind === 'date' ? '' : `<label style="grid-column:2 / -1">
+      پیشنهاد مقدار از این ستون (اختیاری)، مثل <code dir="ltr">customers.name</code>
+      <input class="input" data-sug="${i}" autocomplete="off" spellcheck="false"
+             dir="ltr" style="text-align:left;font-family:var(--font-latin)"
+             value="${esc(p.suggest_table ? p.suggest_table + '.' + p.suggest_column : '')}"
+             placeholder="جدول.ستون">
+    </label>
+    <label style="align-self:center">
+      <input type="checkbox" data-sugperson="${i}"${p.suggest_person ? ' checked' : ''}>
+      نام افراد است
+    </label>`}
+    <p class="phint" style="grid-column:1 / -1">${esc(k.hint || '')}</p>
+    ${used ? '' : '<p class="pnote">پرس‌وجو دیگر این فیلتر را صدا نمی‌زند، پس اثری ندارد.</p>'}
+    <div class="pval">
+      <label>مقدار برای این اجرا${valCtl}</label>
+    </div>
+  </div>`;
+}
+
+function renderParams() {
+  const wrap = $('paramsWrap');
+  wrap.hidden = PARAMS.length === 0;
+  if (!PARAMS.length) { $('paramsBox').innerHTML = ''; return; }
+
+  // "Used" is decided against the query as it stands, so a filter left behind
+  // by an edit shows as inert instead of quietly doing nothing.
+  const inSQL = new Set(USED_NAMES);
+  $('paramsCount').textContent = faNum.format(PARAMS.length) + ' فیلتر';
+  $('paramsBox').innerHTML =
+    PARAMS.map((p, i) => paramRow(p, i, inSQL.has(p.name))).join('');
+}
+
+// readDecls pulls the declarations back out of the form.
+//
+// Read at the moment they are needed rather than on every keystroke: a filter
+// is four fields, and an oninput that rebuilt the panel would move the caret
+// out from under whoever was typing in it.
+function readDecls() {
+  const box = $('paramsBox');
+  PARAMS = PARAMS.map((p, i) => {
+    const get = sel => box.querySelector(`[${sel}="${i}"]`);
+    const label = get('data-label'), kind = get('data-kind');
+    const def = get('data-def'), cal = get('data-cal'), opts = get('data-opts');
+    const sug = get('data-sug'), sugPerson = get('data-sugperson');
+    const out = {
+      name: p.name,
+      label: label ? label.value.trim() : p.label,
+      kind: kind ? kind.value : p.kind,
+      default: def ? def.value : p.default,
+    };
+    if (out.kind === 'date') out.calendar = cal ? cal.value : (p.calendar || 'gregorian');
+
+    // "table.column", split here rather than asking for two boxes. One field
+    // is what somebody reading the schema tree beside them already has in
+    // their head, and the server proves both halves anyway.
+    const raw = sug ? sug.value.trim() :
+      (p.suggest_table ? p.suggest_table + '.' + p.suggest_column : '');
+    if (raw) {
+      const dot = raw.lastIndexOf('.');
+      if (dot > 0) {
+        out.suggest_table = raw.slice(0, dot).trim();
+        out.suggest_column = raw.slice(dot + 1).trim();
+      } else {
+        // Sent as typed so the server explains what is wrong, rather than
+        // this quietly dropping it and the box never suggesting anything.
+        out.suggest_table = raw;
+      }
+      out.suggest_person = !!(sugPerson ? sugPerson.checked : p.suggest_person);
+    }
+    // Carried through so a re-render keeps the box wired to its datalist; the
+    // server recomputes it on save.
+    out.suggestable = !!(out.suggest_table && out.suggest_column);
+    if (out.kind === 'choice') {
+      // "value|label" per line, and a line with no bar labels itself -- so
+      // listing four statuses does not mean typing each of them twice.
+      const text = opts ? opts.value : (p.options || []).map(o => o.value).join('\n');
+      out.options = text.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+        const bar = l.indexOf('|');
+        return bar < 0 ? { value: l, label: l }
+          : { value: l.slice(0, bar).trim(), label: l.slice(bar + 1).trim() };
+      });
+    }
+    return out;
+  });
+  return PARAMS;
+}
+
+// fillOptionsFrom writes a column's distinct values into a dropdown filter's
+// options list.
+//
+// The values are read from the result already on screen, not queried. That is
+// the honest limit and it is stated: what it can offer is what this page of
+// the result holds. For a status or a method column -- the ones a dropdown is
+// for -- that is every value there is, and the alternative was asking somebody
+// to type them out while looking at them in the table below.
+//
+// It appends rather than replaces, so a list somebody has already curated is
+// added to rather than thrown away, and repeats are dropped.
+function fillOptionsFrom(sel) {
+  const i = sel.dataset.fillfrom;
+  const col = sel.value;
+  sel.value = '';
+  if (!col || !LAST_RESULT) return;
+
+  const ci = LAST_RESULT.columns.indexOf(col);
+  if (ci < 0) return;
+
+  const box = $('paramsBox').querySelector(`[data-opts="${i}"]`);
+  if (!box) return;
+
+  const have = new Set(box.value.split('\n')
+    .map(l => l.split('|')[0].trim()).filter(Boolean));
+  const added = [];
+  for (const row of LAST_RESULT.rows) {
+    const v = row[ci];
+    if (v === null || v === undefined) continue;
+    const s = String(v).trim();
+    if (!s || have.has(s)) continue;
+    have.add(s);
+    added.push(s);
+  }
+  if (!added.length) { toast('این ستون مقدار تازه‌ای نداشت.', 'bad'); return; }
+
+  added.sort((a, b) => a.localeCompare(b, 'fa'));
+  const existing = box.value.trim();
+  box.value = (existing ? existing + '\n' : '') + added.join('\n');
+  readDecls();
+  toast(faNum.format(added.length) + ' گزینه از «' +
+    headingFor(LAST_RESULT, ci) + '» اضافه شد.');
+}
+
+// Completions for a filter box, from the column the report names.
+//
+// Debounced, and the server caches the column for ten minutes -- so a burst
+// of typing is one round trip rather than one per character, and a second
+// burst is none at all. Failures are silent by design: a box that cannot
+// complete should still be a working text field, not a red message under
+// something somebody is mid-word in.
+let sugTimer = null;
+function suggestFor(el) {
+  const i = el.dataset.val;
+  const p = PARAMS[i];
+  if (!p || !p.suggest_table || !p.suggest_column) return;
+  const list = $('sug' + i);
+  if (!list) return;
+
+  clearTimeout(sugTimer);
+  const typed = el.value;
+  sugTimer = setTimeout(async () => {
+    const q = new URLSearchParams({
+      source: $('runSource').value,
+      table: p.suggest_table, column: p.suggest_column,
+      person: p.suggest_person ? '1' : '0',
+      q: typed,
+    });
+    try {
+      const r = await api('/api/builder/suggest?' + q.toString());
+      if (!r.ok) return;
+      const d = await r.json();
+      list.innerHTML = (d.values || [])
+        .map(v => `<option value="${esc(v)}"></option>`).join('');
+    } catch (e) { /* a text field that does not complete is still a text field */ }
+  }, 220);
+}
+
+// paramValues is what the reader chose, by name. Blank is left out entirely
+// rather than sent as "", so the server applies the default -- which is what
+// makes an empty box mean "no filter" instead of "match nothing".
+function paramValues() {
+  const box = $('paramsBox');
+  const out = {};
+  PARAMS.forEach((p, i) => {
+    const el = box.querySelector(`[data-val="${i}"]`);
+    if (!el) return;
+    const v = el.value.trim();
+    if (v) out[p.name] = v;
+  });
+  return out;
+}
+
+// syncParams asks the server which filters the query declares, and reconciles.
+//
+// Additive: a placeholder with no row gets one, and a row whose placeholder
+// has gone is kept but marked inert. Deleting it would throw away a label
+// somebody wrote because they had not finished typing the WHERE clause yet.
+async function syncParams(quiet) {
+  const sql = $('sql').value;
+  let d;
+  try {
+    const r = await api('/api/builder/params', {
+      method: 'POST', body: JSON.stringify({ sql }),
+    });
+    if (!r.ok) return;
+    d = await r.json();
+  } catch (e) { return; }
+
+  KINDS = d.kinds || KINDS;
+  CHART_KINDS = d.charts || CHART_KINDS;
+  CHART_AGGS = d.chartAggs || CHART_AGGS;
+  CHART_BUCKETS = d.chartBuckets || CHART_BUCKETS;
+  CHART_COMPARES = d.chartCompares || CHART_COMPARES;
+  USED_NAMES = d.names || [];
+
+  // The type each placeholder's own clause implies. A new row starts as that
+  // rather than as plain text: a placeholder against LIKE bound as text binds
+  // "" instead of "%", which matches only the rows whose column is empty --
+  // three of twenty-eight on the live data, which reads as a broken report.
+  const suggested = new Map((d.found || []).map(f => [f.name, f.kind]));
+
+  const have = new Map(readDecls().map(p => [p.name, p]));
+  const added = [];
+  // Query order first, so the boxes appear in the order the query reads.
+  const next = USED_NAMES.map(n => {
+    if (have.has(n)) { const p = have.get(n); have.delete(n); return p; }
+    added.push(n);
+    return { name: n, label: '', kind: suggested.get(n) || 'text', default: '' };
+  });
+  // Then whatever is declared but no longer used, kept at the end.
+  for (const p of have.values()) next.push(p);
+
+  PARAMS = next;
+  renderParams();
+  if (!quiet && added.length) {
+    toast(added.map(n => '@' + n).join('، ') + ' به فیلترها اضافه شد.');
+  }
+}
+
+// ------------------------------------------------------------------ chart
+
+let CHART_KINDS = [];
+let CHART_AGGS = [];
+let CHART_BUCKETS = [];
+let CHART_COMPARES = [];
+// CHART is the report's chart, or null for a table only -- which is most of
+// them. Held here and saved with the report; the drawing itself is rebuilt
+// from the rows on every run.
+let CHART = null;
+let LAST_RESULT = null;
+let chartObj = null;
+
+const chartKindOf = id => CHART_KINDS.find(k => k.id === id) || null;
+const chartAggOf = id => CHART_AGGS.find(a => a.id === id) || CHART_AGGS[0] || null;
+
+// toNumber reads a number out of whatever the column actually holds.
+//
+// Not parseFloat, and this is not defensiveness: in many databases the
+// money columns are formatted STRINGS, mixing
+// currencies and thousands separators ("۱٫۲۰۰٬۰۰۰ ریال", "12.964 دلار",
+// "1,234.56"), and several numeric-looking columns are VARCHAR. parseFloat on
+// any of those returns NaN or, worse, a truncated number: parseFloat("1,234")
+// is 1, so a chart would quietly plot a thousandth of the real figure.
+//
+// So: Persian and Arabic-Indic digits are folded to ASCII, the Arabic decimal
+// and thousands marks are translated, and the separators are resolved by
+// position rather than by assuming a locale -- whichever of "." or "," appears
+// LAST is the decimal one, which reads both "1,234.56" and "1.234,56"
+// correctly. Anything with no digit in it at all returns null, and the caller
+// counts those rather than treating them as zero.
+function toNumber(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  let s = String(v);
+
+  // Digits first, so the separator logic below sees ASCII.
+  s = s.replace(/[۰-۹]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x06F0 + 48))
+       .replace(/[٠-٩]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x0660 + 48))
+       .replace(/٫/g, '.')   // Arabic decimal separator
+       .replace(/٬/g, ',');  // Arabic thousands separator
+
+  if (!/[0-9]/.test(s)) return null;
+
+  // A date or a time is not a quantity, and this is the case that made the
+  // check necessary: almost every date column in this database holds a Jalali
+  // date as TEXT ("1405/04/10"). Stripping its separators the way the code
+  // below strips a currency symbol leaves "14050410", which plots happily as
+  // fourteen million and is the worst kind of wrong -- a chart that is drawn,
+  // is wrong, and says nothing about it. Refusing means the value is counted
+  // as unreadable and the reader is told.
+  if (/[0-9][\/:][0-9]/.test(s) || /[0-9]-[0-9]/.test(s)) return null;
+
+  const neg = /^\s*[-(]/.test(s);
+  const lastDot = s.lastIndexOf('.'), lastComma = s.lastIndexOf(',');
+  if (lastDot >= 0 && lastComma >= 0) {
+    // Both present: the later one is the decimal point, the earlier is
+    // grouping. Removing the wrong one turns 1.234,56 into 123456.
+    const dec = lastDot > lastComma ? '.' : ',';
+    const grp = dec === '.' ? ',' : '.';
+    s = s.split(grp).join('').replace(dec, '.');
+  } else if (lastComma >= 0) {
+    // One kind only. Three digits after it is grouping ("1,234"); anything
+    // else is a decimal comma ("1,5").
+    s = /,[0-9]{3}(?![0-9])/.test(s) ? s.split(',').join('') : s.replace(',', '.');
+  }
+
+  s = s.replace(/[^0-9.]/g, '');
+  // A stray second dot (a date, say) would make parseFloat stop early and
+  // return a number that is not the value -- refuse rather than mislead.
+  if ((s.match(/\./g) || []).length > 1) return null;
+  const n = parseFloat(s);
+  if (!Number.isFinite(n)) return null;
+  return neg ? -n : n;
+}
+
+// bucketLabel groups a date label to its month or year.
+//
+// String truncation, not date arithmetic, and that is the right tool here:
+// the date columns in this database are TEXT holding a Jalali date
+// ("1404/03/12"), whose month is its first seven characters. Converting to a
+// calendar and back would need a Jalali library to produce the same answer
+// this produces by taking a substring -- which is exactly why the shipped
+// reports group these columns as strings too.
+//
+// Only a value that LOOKS like a date is touched. A label of "WGL" under a
+// month grouping is left alone rather than truncated to "WGL", because a
+// grouping applied to the wrong column should draw a recognisably odd chart
+// rather than a plausible one built from fragments of names.
+function bucketLabel(v, bucket) {
+  if (!bucket) return v;
+  const s = v.trim();
+  // yyyy/mm/dd or yyyy-mm-dd, either calendar -- the shapes these columns use.
+  const m = /^(\d{4})[-\/](\d{1,2})(?:[-\/](\d{1,2}))?/.exec(s);
+  if (!m) return v;
+  if (bucket === 'year') return m[1];
+  if (bucket === 'month') return m[1] + '/' + m[2].padStart(2, '0');
+  // The day grouping truncates nothing -- it PADS, so that "1404/3/5" and
+  // "1404/03/05" are one category rather than two, which is what a raw date
+  // column gives you ungrouped. It is also the grouping a month-on-month
+  // comparison needs, since it is the only one that leaves the day in.
+  if (bucket === 'day') {
+    return m[3] ? m[1] + '/' + m[2].padStart(2, '0') + '/' + m[3].padStart(2, '0')
+                : m[1] + '/' + m[2].padStart(2, '0');
+  }
+  return v;
+}
+
+// splitPeriod cuts a bucketed date label into the period and the position
+// within it.
+//
+// "1405/03" under a year-on-year comparison is the period 1405 at position 03,
+// which is why that mode is paired with the MONTH grouping: it is the grouping
+// that leaves the month in the label. Month-on-month is paired with the DAY
+// grouping for the same reason, and given "1405/03" -- a date whose column
+// holds no day -- it returns null rather than guessing one. The reader is then
+// told the column has no day in it, which is the truth and is actionable;
+// inventing a day would draw one point per period and look like an answer.
+function splitPeriod(label, compare) {
+  const m = /^(\d{4})\/(\d{1,2})(?:\/(\d{1,2}))?$/.exec(String(label).trim());
+  if (!m) return null;
+  if (compare === 'year') {
+    return { period: m[1], at: m[2].padStart(2, '0') };
+  }
+  if (compare === 'month') {
+    if (!m[3]) return null;  // a month label carries no day
+    return { period: m[1] + '/' + m[2].padStart(2, '0'), at: m[3].padStart(2, '0') };
+  }
+  return null;
+}
+
+// comparePeriods regroups one continuous series into one series per period.
+//
+// The management question -- "how does this month compare with last" -- asked
+// of data already on screen. A single line running across two years answers
+// "what happened"; two lines over the same twelve months answer "is it better
+// or worse", which is the question actually being asked.
+//
+// Done by REGROUPING the rows already fetched, not by running the query again.
+// Two runs are two answers taken a moment apart against a database somebody
+// else is writing to, and the totals would not reconcile with the table below.
+//
+// Returns null when the data cannot support it, with the reason, so the page
+// can say why instead of drawing one line and calling it a comparison.
+function comparePeriods(d, spec) {
+  if (!spec.compare || d.points || d.distribution) return null;
+
+  // Every label has to be splittable, or the axis would mix "03" with
+  // "Kara Post" and the chart would be nonsense.
+  //
+  // Two different failures, told apart because they have two different fixes:
+  // a label that is not a date at all means the wrong column is being
+  // grouped, while a date with no day in it means the column holds months and
+  // there is nothing finer to compare. Reporting both as one would send the
+  // reader to change the column when the column is right.
+  const split = d.labels.map(l => splitPeriod(l, spec.compare));
+  if (split.some(s => !s)) {
+    const anyDate = d.labels.some(l => /^\d{4}\/\d{1,2}(\/\d{1,2})?$/.test(String(l).trim()));
+    if (!anyDate) {
+      return { no: 'برچسب‌ها تاریخ نیستند؛ ستون برچسب را روی یک ستون تاریخ بگذارید.' };
+    }
+    return { no: spec.compare === 'month'
+      ? 'این ستون تاریخ فقط ماه دارد و روز ندارد، پس ماه‌ها قابل مقایسه نیستند؛ ' +
+        'برای مقایسهٔ سال با سال گروه‌بندی را روی «ماه» بگذارید.'
+      : 'بعضی برچسب‌ها تاریخ کامل نیستند.' };
+  }
+
+  // The positions become the axis, in order; the periods become the series,
+  // oldest first so the legend reads the way a comparison is spoken --
+  // "1404 against 1405".
+  const positions = [...new Set(split.map(s => s.at))].sort();
+  const periods = [...new Set(split.map(s => s.period))].sort();
+  if (periods.length < 2) {
+    return { no: 'برای مقایسه به دو دورهٔ کامل نیاز است؛ ' +
+      'بازهٔ پرس‌وجو را بازتر کنید.' };
+  }
+
+  // One series per period per plotted column. With one column that is the
+  // usual two lines; with two it is four, which is legible but is the point
+  // at which a reader should probably plot one thing at a time.
+  const series = [];
+  for (const s of d.series) {
+    for (const period of periods) {
+      const byPosition = new Map();
+      split.forEach((sp, i) => {
+        if (sp.period === period) byPosition.set(sp.at, s.data[i]);
+      });
+      series.push({
+        name: d.series.length > 1 ? `${s.name}، ${period}` : period,
+        // A period with no row at a position is a GAP, not a zero: the year
+        // has not reached that month yet, and a line dropping to nought would
+        // read as "we sold nothing".
+        data: positions.map(p => byPosition.has(p) ? byPosition.get(p) : null),
+      });
+    }
+  }
+  return { labels: positions, series, periods };
+}
+
+// The series colours. The accent first, so a single-series chart is in the
+// page's own colour rather than Chart.js's default blue.
+const CHART_COLOURS = ['#E5641D', '#5FB89F', '#E0B15C', '#7FA9D9', '#D9566F',
+                       '#A98BD1', '#6FC4AB', '#E5BA6B'];
+
+// chartData folds the result into labels and series.
+//
+// Returns what could not be read as well as what could, so the page can say
+// so. A chart drawn from half a column with no mention of the other half is
+// the most expensive kind of wrong.
+// scatterData turns rows into points, one per row.
+//
+// No grouping at all: one point per row IS the chart, and folding by the x
+// value would collapse the cloud this exists to show into a single point per
+// x. The label column is the horizontal axis and has to be a number; a row
+// where either side cannot be read is dropped and counted, because a point
+// drawn at a guessed coordinate is worse than a point missing.
+function scatterData(res, spec) {
+  const xi = res.columns.indexOf(spec.label);
+  const yName = (spec.values || [])[0];
+  const yi = yName ? res.columns.indexOf(yName) : -1;
+  const missing = [];
+  if (xi < 0) missing.push(spec.label);
+  if (yName && yi < 0) missing.push(yName);
+  if (xi < 0 || yi < 0) {
+    return { missing, points: true, labels: [], series: [], unreadable: 0, rows: 0 };
+  }
+
+  const pts = [];
+  let unreadable = 0;
+  for (const row of res.rows) {
+    const x = toNumber(row[xi]), y = toNumber(row[yi]);
+    if (x === null || y === null) { unreadable++; continue; }
+    pts.push({ x, y });
+  }
+  return {
+    missing, points: true, labels: [],
+    series: [{ name: yName + ' / ' + spec.label, data: pts }],
+    unreadable, rows: res.rows.length,
+  };
+}
+
+// histData divides one numeric column into equal ranges and counts each.
+//
+// The answer to "what do most of these weigh", which no per-category chart
+// can give. Equal-width ranges over the observed minimum and maximum, because
+// the alternative -- equal-count quantiles -- draws bars of identical height
+// and shows nothing.
+function histData(res, spec) {
+  const name = (spec.values || [])[0];
+  const ci = name ? res.columns.indexOf(name) : -1;
+  if (ci < 0) {
+    return { missing: name ? [name] : [], labels: [], series: [], unreadable: 0, rows: 0 };
+  }
+
+  const nums = [];
+  let unreadable = 0;
+  for (const row of res.rows) {
+    const n = toNumber(row[ci]);
+    if (n === null) { if (row[ci] !== null && row[ci] !== '') unreadable++; continue; }
+    nums.push(n);
+  }
+  if (!nums.length) {
+    return { missing: [], labels: [], series: [], unreadable, rows: res.rows.length };
+  }
+
+  const lo = Math.min(...nums), hi = Math.max(...nums);
+
+  // Every value identical is ONE range holding everything, not the requested
+  // number of ranges starting at that value.
+  //
+  // Measured: three rows all reading 7, asked for five ranges, came out as
+  // "7.0 – 8.0" with a count of three followed by four empty ranges up to
+  // "11 – 12". Four of those ranges are invented -- nothing in the data
+  // reaches 12 -- and the chart says the values are spread when they are not.
+  if (!(hi > lo)) {
+    return {
+      missing: [], labels: [fmtBinEdge(lo)],
+      series: [{ name: 'تعداد', data: [nums.length] }],
+      unreadable, rows: res.rows.length, distribution: true, single: true,
+    };
+  }
+
+  const bins = Math.max(3, Math.min(60, spec.bins || 12));
+  const width = (hi - lo) / bins;
+  const counts = new Array(bins).fill(0);
+  for (const n of nums) {
+    // The top value belongs in the last range, not a range of its own past
+    // the end.
+    let k = hi > lo ? Math.floor((n - lo) / width) : 0;
+    if (k >= bins) k = bins - 1;
+    if (k < 0) k = 0;
+    counts[k]++;
+  }
+
+  const labels = counts.map((_, k) => {
+    const a = lo + k * width, b = a + width;
+    return fmtBinEdge(a) + ' تا ' + fmtBinEdge(b);
+  });
+  return {
+    missing: [], labels,
+    series: [{ name: 'تعداد', data: counts }],
+    unreadable, rows: res.rows.length, distribution: true,
+  };
+}
+
+// countNonPositive is how many plotted numbers a logarithmic axis cannot show.
+//
+// A logarithm is undefined at nought and below, and Chart.js does not say so:
+// asked to draw [-5, 10, 0, 100] on a logarithmic axis it produced an axis
+// starting at 1 and drew TWO bars, silently. A chart missing half its data
+// with nothing on screen to say which half is the worst thing in this file,
+// so the count is carried out and reported.
+function countNonPositive(d) {
+  let n = 0;
+  for (const s of d.series || []) {
+    for (const v of s.data || []) {
+      const num = (v && typeof v === 'object') ? v.y : v;
+      if (num !== null && num !== undefined && Number(num) <= 0) n++;
+    }
+  }
+  return n;
+}
+
+// fmtBinEdge keeps a range label short enough to read on an axis.
+function fmtBinEdge(v) {
+  const a = Math.abs(v);
+  if (a >= 1000) return Math.round(v).toLocaleString('en-US');
+  if (a >= 10) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function chartData(res, spec) {
+  const kind = chartKindOf(spec.kind) || {};
+  if (kind.bins) return histData(res, spec);
+  if (kind.numeric_label) return scatterData(res, spec);
+
+  const li = res.columns.indexOf(spec.label);
+  const missing = [];
+  if (li < 0) missing.push(spec.label);
+  const vi = (spec.values || []).map(name => {
+    const i = res.columns.indexOf(name);
+    if (i < 0) missing.push(name);
+    return { name, i };
+  }).filter(c => c.i >= 0);
+
+  if (li < 0 || (spec.agg !== 'count' && !vi.length)) {
+    return { missing, labels: [], series: [], unreadable: 0, rows: 0 };
+  }
+
+  // Insertion order, which is the query's own ORDER BY. Sorting here would
+  // silently override an ORDER BY the author wrote on purpose.
+  const groups = new Map();
+  let unreadable = 0;
+  // Whether ANY number was read at all. A column of pure text folds to a row
+  // of zeroes, which draws as a set of flat bars -- a chart that looks like
+  // "everything is nought" rather than "this column holds no numbers".
+  let readAny = false;
+  for (const row of res.rows) {
+    const key = row[li] === null || row[li] === ''
+      ? '—' : bucketLabel(String(row[li]), spec.bucket);
+    let g = groups.get(key);
+    if (!g) { g = { n: 0, sums: vi.map(() => 0), seen: vi.map(() => 0) }; groups.set(key, g); }
+    g.n++;
+    vi.forEach((c, k) => {
+      const num = toNumber(row[c.i]);
+      if (num === null) { if (row[c.i] !== null && row[c.i] !== '') unreadable++; return; }
+      readAny = true;
+      g.sums[k] += num;
+      g.seen[k]++;
+    });
+  }
+
+  let labels = [...groups.keys()];
+
+  // Insertion order is the query's own ORDER BY, and overriding it would throw
+  // away a decision the author made -- so raw labels are left exactly as they
+  // arrived.
+  //
+  // Bucketed labels are different: "1405/03" was computed here, not chosen by
+  // anybody, and a query with no ORDER BY on its date column produced
+  // 04, 05, 03, 06 in that order. A trend line through those months is not a
+  // trend, it is a zigzag that looks like one -- the worst kind of chart.
+  // Zero-padded year/month sorts correctly as text, in either calendar, which
+  // is the same property that makes the truncation work at all.
+  if (spec.bucket) {
+    labels.sort((a, b) => {
+      // The empty category last, wherever it fell: it is not a date and has no
+      // place in the middle of a timeline.
+      if (a === '—') return 1;
+      if (b === '—') return -1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+  }
+  let series;
+  if (spec.agg === 'count') {
+    series = [{ name: 'تعداد ردیف', data: labels.map(l => groups.get(l).n) }];
+  } else {
+    series = vi.map((c, k) => ({
+      name: c.name,
+      data: labels.map(l => {
+        const g = groups.get(l);
+        if (spec.agg === 'avg') return g.seen[k] ? g.sums[k] / g.seen[k] : null;
+        // "none" still folds rows that share a label -- there is only one bar
+        // per label on a category axis, so summing them is the only honest
+        // reading. Where labels are unique, which is what "none" is for, a sum
+        // of one row is that row.
+        return g.sums[k];
+      }),
+    }));
+  }
+  // A percentage-stacked chart shows the MIX within each category, so each
+  // category's columns are rescaled to add to a hundred.
+  //
+  // Done here rather than by Chart.js, which has no such stacking mode: the
+  // numbers themselves become percentages, which also means the tooltip and
+  // the axis agree about what they are. A category whose columns total zero is
+  // left at zero rather than divided by it -- there is no mix to show.
+  if (spec.kind === 'sbar' && series.length) {
+    const totals = labels.map((_, i) =>
+      series.reduce((sum, s) => sum + (Number(s.data[i]) || 0), 0));
+    series = series.map(s => ({
+      name: s.name,
+      data: s.data.map((v, i) => totals[i] ? (Number(v) || 0) / totals[i] * 100 : 0),
+    }));
+  }
+
+  const out = { missing, labels, series, unreadable, rows: res.rows.length,
+    percent: spec.kind === 'sbar',
+    // Counting rows needs no numbers, so it is never "no numbers read".
+    noNumbers: spec.agg !== 'count' && !readAny && res.rows.length > 0 };
+
+  // The comparison goes LAST, on the aggregated series: it regroups totals
+  // that are already correct rather than changing how they were computed.
+  // Doing it earlier would mean aggregating twice and having to keep the two
+  // in step.
+  if (spec.compare) {
+    const cmp = comparePeriods(out, spec);
+    if (cmp && cmp.no) {
+      out.compareNote = cmp.no;
+    } else if (cmp) {
+      out.labels = cmp.labels;
+      out.series = cmp.series;
+      out.compared = cmp.periods;
+    }
+  }
+  return out;
+}
+
+let chartLibReady = null;
+function loadChartLib() {
+  if (chartLibReady) return chartLibReady;
+  chartLibReady = new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = '/vendor/chart.umd.min.js';
+    el.onload = () => {
+      // Chart.js ships its own font family and never inherits the canvas's,
+      // so every Persian label would be drawn in a Latin face. That is not
+      // only ugly: a Latin face does not mirror bracket pairs in a
+      // right-to-left run, so a label like «وزن (کیلوگرم)» comes out with its
+      // parentheses swapped. The same fix, for the same reason, as the
+      // reports page.
+      const fam = getComputedStyle(document.body).fontFamily;
+      if (fam) Chart.defaults.font.family = fam.replace(/\s+/g, ' ');
+      // And its own default text colour, #666, which on this dark ground is
+      // near-black on near-black.
+      Chart.defaults.color = '#ffffff';
+      Chart.defaults.borderColor = 'rgba(255,255,255,.14)';
+      Chart.defaults.plugins.legend.labels.color = '#ffffff';
+      Chart.defaults.plugins.tooltip.titleColor = '#ffffff';
+      Chart.defaults.plugins.tooltip.bodyColor = '#ffffff';
+      resolve();
+    };
+    el.onerror = () => reject(new Error('chart library did not load'));
+    document.head.appendChild(el);
+  });
+  chartLibReady.catch(() => { chartLibReady = null; });
+  return chartLibReady;
+}
+
+// --------------------------------------------------- knowing the data
+
+// profileColumns measures what each column of a result actually holds.
+//
+// This is what makes the chart picker something other than a list of names:
+// every question below -- can this be plotted, is it a date, is it a category
+// or a reference number -- is answered from the rows on screen rather than
+// from the column's declared type, which in this database is VARCHAR for
+// almost everything and therefore says nothing.
+//
+// Sampled rather than exhaustive above a few hundred rows: the answers are
+// proportions and a sample settles them, and this runs on every result.
+function profileColumns(res) {
+  if (!res || !res.columns) return [];
+  const rows = res.rows || [];
+  const step = Math.max(1, Math.floor(rows.length / 300));
+
+  return res.columns.map((name, i) => {
+    let seen = 0, numeric = 0, dated = 0, blank = 0;
+    const distinct = new Set();
+    for (let r = 0; r < rows.length; r += step) {
+      const v = rows[r][i];
+      if (v === null || v === undefined || String(v).trim() === '') { blank++; continue; }
+      seen++;
+      const s = String(v);
+      if (distinct.size < 200) distinct.add(s);
+      if (toNumber(v) !== null) numeric++;
+      if (/^\d{4}[-\/]\d{1,2}([-\/]\d{1,2})?/.test(s.trim())) dated++;
+    }
+    return {
+      name, index: i, seen, blank,
+      distinct: distinct.size,
+      // Fractions, so a column of mostly-numbers with one stray note still
+      // counts as plottable.
+      numeric: seen ? numeric / seen : 0,
+      dated: seen ? dated / seen : 0,
+      hidden: !!(res.hidden && res.hidden[i]),
+      heading: headingFor(res, i),
+    };
+  });
+}
+
+// A column is worth plotting if most of its values are numbers, and worth
+// grouping by if it has few enough distinct values to make readable
+// categories. The thresholds are what this data needs: 0.7 because a weight
+// column with a couple of notes in it is still a weight column, and 40
+// categories because beyond that a bar chart is a barcode.
+const PLOTTABLE = 0.7;
+const DATEISH = 0.7;
+const MAX_CATEGORIES = 40;
+
+const isNumericCol = p => p.numeric >= PLOTTABLE && p.seen > 0;
+const isDateCol = p => p.dated >= DATEISH && p.seen > 0;
+const isCategoryCol = p =>
+  p.seen > 0 && p.distinct > 1 && p.distinct <= MAX_CATEGORIES && !isNumericCol(p);
+
+// pickColumns proposes the columns one kind should use for this result.
+//
+// Returns null when the kind cannot be drawn from this result at all, with the
+// reason -- which the gallery shows on the dimmed tile, so "why can I not
+// choose a scatter" is answered before it is asked.
+function pickColumns(kind, prof) {
+  const nums = prof.filter(isNumericCol);
+  const dates = prof.filter(isDateCol);
+  // Fewest distinct values first: the most readable category axis.
+  const cats = prof.filter(isCategoryCol).sort((a, b) => a.distinct - b.distinct);
+  // A date column is a fine category too, once bucketed.
+  const anyCat = cats.length ? cats : dates;
+
+  switch (kind) {
+    case 'hist':
+      if (!nums.length) return { no: 'ستون عددی ندارد' };
+      return { values: [nums[0].name], bins: 12 };
+
+    case 'scatter':
+      if (nums.length < 2) return { no: 'به دو ستون عددی نیاز دارد' };
+      return { label: nums[0].name, values: [nums[1].name] };
+
+    case 'line': case 'area': {
+      const axis = dates[0] || anyCat[0];
+      if (!axis) return { no: 'ستون تاریخ یا دسته ندارد' };
+      const v = nums.filter(n => n.name !== axis.name);
+      return {
+        label: axis.name,
+        bucket: isDateCol(axis) ? 'month' : '',
+        ...(v.length ? { values: [v[0].name], agg: 'sum' } : { values: [], agg: 'count' }),
+      };
+    }
+
+    case 'sbar': case 'mixed': case 'radar': {
+      if (!anyCat.length) return { no: 'ستون دسته ندارد' };
+      const label = anyCat[0];
+      const v = nums.filter(n => n.name !== label.name);
+      if (v.length < 2) return { no: 'به دو ستون عددی نیاز دارد' };
+      return { label: label.name, values: [v[0].name, v[1].name],
+               agg: kind === 'radar' ? 'avg' : 'sum' };
+    }
+
+    default: {
+      // bar, hbar, pie, doughnut, polar: one category, one number -- or a
+      // count of rows where there is no number to add up, which is a
+      // perfectly good chart.
+      if (!anyCat.length) return { no: 'ستون دسته ندارد' };
+      const label = anyCat[0];
+      const v = nums.filter(n => n.name !== label.name);
+      return {
+        label: label.name,
+        bucket: isDateCol(label) ? 'month' : '',
+        ...(v.length ? { values: [v[0].name], agg: 'sum' } : { values: [], agg: 'count' }),
+      };
+    }
+  }
+}
+
+// specFor builds a complete, drawable spec for one kind from this result.
+function specFor(kind, prof, keepTitle) {
+  const picked = pickColumns(kind, prof);
+  if (picked.no) return { no: picked.no };
+  return {
+    kind, label: '', values: [], agg: 'sum', bucket: '',
+    stacked: false, log_scale: false, bins: 0,
+    title: keepTitle || '',
+    ...picked,
+  };
+}
+
+// recommend proposes the chart this result most wants.
+//
+// Ordered by what the data supports rather than by preference: a result with a
+// date column is asking to be a trend, one with two numbers and no category is
+// asking to be a scatter, and anything with a category and a number is a bar --
+// which is most of them, and is why bar is the fallback rather than the first
+// guess.
+function recommend(prof) {
+  const nums = prof.filter(isNumericCol);
+  const dates = prof.filter(isDateCol);
+  const cats = prof.filter(isCategoryCol);
+
+  if (dates.length && (nums.length || cats.length)) {
+    return { kind: 'line', why: 'ستون تاریخ دارد، پس روند در طول زمان' };
+  }
+  if (cats.length && nums.length >= 2) {
+    return { kind: 'mixed', why: 'یک دسته و دو عدد دارد، پس میله و خط با هم' };
+  }
+  if (cats.length && nums.length) {
+    return { kind: 'bar', why: 'یک دسته و یک عدد دارد' };
+  }
+  if (cats.length) {
+    return { kind: 'bar', why: 'دسته دارد ولی عددی برای جمع زدن نیست، پس تعداد ردیف' };
+  }
+  if (nums.length >= 2) {
+    return { kind: 'scatter', why: 'دو ستون عددی دارد، پس رابطهٔ آن دو' };
+  }
+  if (nums.length) {
+    return { kind: 'hist', why: 'یک ستون عددی دارد، پس توزیع آن' };
+  }
+  return null;
+}
+
+// chartConfig builds the Chart.js configuration for one kind.
+//
+// One function for all twelve, and one function shared with the gallery of
+// previews -- so what somebody picks from the gallery is drawn by the same
+// code that draws it afterwards. Two builders would let the preview promise
+// something the chart does not deliver, which is the whole value of having a
+// preview taken away.
+//
+// small is the gallery's version: no legend, no axis labels, no animation. The
+// DATA is identical; only the furniture is dropped, because at 150 pixels the
+// furniture is all you would see.
+function chartConfig(d, spec, small) {
+  const kind = spec.kind;
+  const info = chartKindOf(kind) || {};
+  // Three groups, and the distinction is not cosmetic -- it decides which
+  // scales the configuration may mention at all.
+  //
+  //   sliced   pie, doughnut: NO scales. Handing one an "r" axis makes
+  //            Chart.js try to build a radialLinear scale for a controller
+  //            that has none, and it throws reading a tick callback --
+  //            measured, not guessed.
+  //   radial   polarArea, radar: an "r" axis and nothing else.
+  //   else     an x and a y.
+  const sliced = kind === 'pie' || kind === 'doughnut';
+  const round = sliced || kind === 'polar';
+  const radial = kind === 'polar' || kind === 'radar';
+
+  // Which Chart.js controller draws it. Several of our kinds are one of its
+  // types plus options -- hbar is a bar with a swapped index axis, area is a
+  // filled line, sbar is a stacked bar over rescaled numbers.
+  const type =
+    kind === 'polar' ? 'polarArea' :
+    kind === 'radar' ? 'radar' :
+    kind === 'scatter' ? 'scatter' :
+    round ? kind :
+    (kind === 'line' || kind === 'area') ? 'line' :
+    'bar';
+
+  const colour = i => CHART_COLOURS[i % CHART_COLOURS.length];
+  const fade = (i, a) => {
+    const c = colour(i);
+    const n = parseInt(c.slice(1), 16);
+    return `rgb(${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255} / ${a})`;
+  };
+
+  const datasets = d.series.map((s, i) => {
+    const base = { label: s.name, data: s.data };
+    if (round) {
+      // One colour per slice, not per series: the categories are what differ.
+      return { ...base,
+        backgroundColor: d.labels.map((_, j) => fade(j, kind === 'polar' ? .72 : .92)),
+        borderColor: 'rgba(0,0,0,.28)', borderWidth: 1 };
+    }
+    if (kind === 'radar') {
+      return { ...base, backgroundColor: fade(i, .22), borderColor: colour(i),
+        borderWidth: 2, pointBackgroundColor: colour(i) };
+    }
+    if (kind === 'scatter') {
+      return { ...base, backgroundColor: fade(i, .7), borderColor: colour(i),
+        pointRadius: small ? 2 : 4, pointHoverRadius: small ? 3 : 6 };
+    }
+    if (kind === 'line' || kind === 'area') {
+      return { ...base, borderColor: colour(i), borderWidth: 2,
+        backgroundColor: fade(i, .22), fill: kind === 'area',
+        tension: 0.25, pointRadius: small ? 0 : 3 };
+    }
+    // A mixed chart is the reason datasets carry their own type: the first
+    // column is bars and the rest ride over it as a line, which is how two
+    // measures with different units share one picture.
+    if (kind === 'mixed' && i > 0) {
+      return { ...base, type: 'line', borderColor: colour(i), borderWidth: 2,
+        backgroundColor: fade(i, .2), tension: 0.25, pointRadius: small ? 0 : 3,
+        fill: false, order: 0 };
+    }
+    return { ...base, backgroundColor: fade(i, .92), borderColor: colour(i),
+      borderWidth: 0, order: 1 };
+  });
+
+  const stacked = kind === 'sbar' || (info.stackable && !!spec.stacked);
+  const valueAxis = {
+    stacked,
+    beginAtZero: !spec.log_scale,
+    // A logarithmic axis cannot start at zero and cannot show one: this data
+    // spans 10.45 to 52,689, which is exactly when it earns its place.
+    type: spec.log_scale ? 'logarithmic' : 'linear',
+    max: kind === 'sbar' ? 100 : undefined,
+    ticks: small ? { display: false } : {
+      callback: v => kind === 'sbar' ? v + '٪' : v,
+    },
+    grid: { display: !small },
+  };
+  const categoryAxis = {
+    stacked,
+    type: kind === 'scatter' ? 'linear' : 'category',
+    ticks: small ? { display: false } : { autoSkip: true, maxRotation: 0 },
+    grid: { display: !small && kind === 'scatter' },
+  };
+
+  let scales;
+  if (sliced) {
+    scales = {};
+  } else if (radial) {
+    scales = { r: {
+      beginAtZero: true,
+      ticks: { display: !small },
+      grid: { display: !small },
+      // pointLabels are NOT ticks and are not hidden by hiding them -- a
+      // radar preview came out with three Persian category names bigger than
+      // the shape they were labelling.
+      pointLabels: { display: !small },
+      angleLines: { display: !small },
+    } };
+  } else if (kind === 'hbar') {
+    // The index axis is swapped, so the categories are on y and the values
+    // on x -- and the stacking flag has to travel with them.
+    scales = { y: categoryAxis, x: valueAxis };
+  } else {
+    scales = { x: categoryAxis, y: valueAxis };
+  }
+
+  return {
+    type,
+    data: { labels: d.labels, datasets },
+    options: {
+      // The window has a fixed height and the canvas fills it, so Chart.js
+      // must not also try to keep a ratio -- that is what made it fight the
+      // box and oscillate on the reports page.
+      responsive: true, maintainAspectRatio: false,
+      animation: small ? false : undefined,
+      indexAxis: kind === 'hbar' ? 'y' : 'x',
+      // A gallery tile is decoration for a button; the real chart is the one
+      // people interrogate.
+      events: small ? [] : undefined,
+      plugins: {
+        // Above the chart, matching the reports page.
+        legend: {
+          display: !small && (round || d.series.length > 1),
+          position: 'top',
+        },
+        title: (!small && spec.title) ? { display: true, text: spec.title } : { display: false },
+        tooltip: small ? { enabled: false } : {
+          callbacks: kind === 'sbar' ? {
+            label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(1)}٪`,
+          } : undefined,
+        },
+      },
+      scales,
+    },
+  };
+}
+
+// drawInto draws one chart, replacing whatever was there.
+function drawInto(canvas, d, spec, existing) {
+  if (existing) existing.destroy();
+  return new Chart(canvas, chartConfig(d, spec, false));
+}
+
+// ------------------------------------------------------- chart gallery
+
+// The preview charts, held so they can be destroyed before the tiles they
+// live in are replaced. A canvas whose Chart is still registered cannot be
+// reused, and the gallery is rebuilt on every run.
+let galleryCharts = [];
+
+function destroyGallery() {
+  for (const c of galleryCharts) { try { c.destroy(); } catch (e) {} }
+  galleryCharts = [];
+}
+
+// renderGallery draws one tile per chart type from the current result.
+async function renderGallery() {
+  const box = $('chartGallery');
+  destroyGallery();
+  const res = LAST_RESULT;
+  if (!res || !res.rows || !res.rows.length || !CHART_KINDS.length) {
+    box.innerHTML = '';
+    $('chartRec').textContent = '';
+    return;
+  }
+
+  const prof = profileColumns(res);
+  // Each tile's spec: the columns this kind would use for this result, or the
+  // reason it cannot be drawn.
+  const tiles = CHART_KINDS.map(k => ({ k, spec: specFor(k.id, prof, '') }));
+  const rec = recommend(prof);
+
+  box.innerHTML = tiles.map(({ k, spec }) => {
+    const on = CHART && CHART.kind === k.id;
+    const off = !!spec.no;
+    return `<div class="gtile${on ? ' on' : ''}${off ? ' off' : ''}"
+      data-kind="${esc(k.id)}" ${off ? '' : 'role="button" tabindex="0"'}
+      title="${esc(k.hint || '')}">
+      ${rec && rec.kind === k.id && !off ? '<span class="gstar" title="پیشنهاد">★</span>' : ''}
+      ${off ? `<div class="gwhy">${esc(spec.no)}</div>`
+            : '<div class="gcv"><canvas></canvas></div>'}
+      <span class="gname">${esc(k.label)}</span>
+    </div>`;
+  }).join('');
+
+  $('chartRec').innerHTML = rec
+    ? `پیشنهاد برای این داده: <b>${esc((chartKindOf(rec.kind) || {}).label || rec.kind)}</b>؛ ${esc(rec.why)}. ` +
+      'روی هر کاشی بزنید تا همان نمودار ساخته شود.'
+    : 'برای این نتیجه نموداری پیشنهاد نمی‌شود؛ ستون دسته یا عدد لازم است.';
+
+  try { await loadChartLib(); } catch (e) { return; }
+
+  // Drawn after the markup exists, so each canvas is in the document and has
+  // a size to be responsive to.
+  box.querySelectorAll('.gtile:not(.off)').forEach(tile => {
+    const kind = tile.dataset.kind;
+    const spec = (tiles.find(t => t.k.id === kind) || {}).spec;
+    const canvas = tile.querySelector('canvas');
+    if (!spec || !canvas) return;
+    try {
+      const d = chartData(LAST_RESULT, spec);
+      const nothing = d.points ? !d.series.some(s => s.data.length) : !d.labels.length;
+      if (d.missing.length || nothing || d.noNumbers) { tile.classList.add('off'); return; }
+      galleryCharts.push(new Chart(canvas, chartConfig(d, spec, true)));
+    } catch (e) {
+      // A type that will not draw is marked so rather than left as an empty
+      // box: a blank tile reads as "this chart shows nothing", which is a
+      // different and wrong message.
+      tile.classList.add('off');
+    }
+  });
+}
+
+// pickKind adopts a type from the gallery, with the columns that type needs.
+//
+// Filling the columns in is the point. Choosing "scatter" and then being asked
+// which two of eleven columns to plot is the same work as before with an extra
+// step; choosing it and seeing the scatter it was previewing is the feature.
+// The title is kept, because somebody who named their chart did not mean that
+// name to belong to only one type.
+async function pickKind(kind) {
+  const prof = profileColumns(LAST_RESULT);
+  const spec = specFor(kind, prof, CHART ? CHART.title : '');
+  if (spec.no) { toast(spec.no, 'bad'); return; }
+  CHART = spec;
+  renderChartEditor();
+  await drawChart();
+  await renderGallery();
+}
+
+// noChart takes the chart off screen and takes its notes with it.
+//
+// The notes are the reason this exists. Every one of them describes THIS
+// chart -- values that could not be read, points a log axis dropped, a
+// comparison that could not be drawn -- so a note left standing after the
+// chart is gone describes a chart the reader can no longer see. Measured: a
+// query whose column name was wrong left "this date column has no day in it"
+// on screen, about a query that no longer existed.
+function noChart() {
+  $('chartBox').hidden = true;
+  if (chartObj) { chartObj.destroy(); chartObj = null; }
+  const warn = $('chartWarn');
+  warn.hidden = true;
+  warn.textContent = '';
+  $('chartFoot').textContent = '';
+}
+
+async function drawChart() {
+  if (!CHART || !LAST_RESULT || !LAST_RESULT.rows.length) {
+    noChart();
+    return;
+  }
+  const box = $('chartBox');
+  const d = chartData(LAST_RESULT, CHART);
+  // Nothing to draw, for any of three reasons -- and a column of pure text is
+  // one of them. It folds to a row of zeroes, which draws as flat bars and
+  // reads as "everything is nought" rather than "this column holds no
+  // numbers", so it is refused rather than drawn.
+  const nothing = d.points ? !d.series.some(s => s.data.length) : !d.labels.length;
+  if (d.missing.length || nothing || d.noNumbers) {
+    noChart();
+    // Said in the settings panel rather than where the chart would have been:
+    // the fix is a column choice, so the message belongs beside the chooser.
+    $('chartState').textContent = d.missing.length
+      ? 'این ستون‌ها در نتیجه نیستند: ' + d.missing.join('، ')
+      : ((d.noNumbers || d.unreadable)
+        ? 'هیچ مقدار عددی در این ستون خوانده نشد؛ ستون عددی دیگری انتخاب کنید ' +
+          'یا جمع‌بندی را روی «تعداد ردیف» بگذارید.'
+        : '');
+    return;
+  }
+  $('chartState').textContent = '';
+
+  try { await loadChartLib(); }
+  catch (e) { noChart(); toast('کتابخانهٔ نمودار بار نشد.', 'bad'); return; }
+
+  box.hidden = false;
+  chartObj = drawInto($('chartCanvas'), d, CHART, chartObj);
+
+  // What the chart covers, always stated. It is drawn from the rows on this
+  // page, not from the whole result, and a reader who assumes otherwise draws
+  // the wrong conclusion from a correct picture.
+  const agg = chartAggOf(CHART.agg);
+  const kindInfo = chartKindOf(CHART.kind) || {};
+  const covered = d.points
+    ? `${faNum.format(d.series[0].data.length)} نقطه از ${faNum.format(d.rows)} ردیفِ این صفحه`
+    : (d.distribution
+      ? `${faNum.format(d.labels.length)} بازه از ${faNum.format(d.rows)} ردیفِ این صفحه`
+      : `${faNum.format(d.labels.length)} دسته از ${faNum.format(d.rows)} ردیفِ این صفحه`);
+  $('chartFoot').textContent =
+    (kindInfo.no_agg || !agg ? '' : agg.label + '؛ ') + covered +
+    // WHICH periods are being compared, named. A comparison chart whose legend
+    // reads "1404" and "1405" is only trustworthy if the reader can see that
+    // those are the two the data actually held -- a query covering half of
+    // 1405 compares a full year against a partial one, and the footer is where
+    // that becomes visible.
+    (d.compared ? '، مقایسهٔ ' + d.compared.map(faDigits).join(' و ') : '') +
+    (d.percent ? '، بر حسب درصد' : '') +
+    (CHART.log_scale ? '، محور لگاریتمی' : '') +
+    (LAST_RESULT.has_more ? '. نتیجه ردیف‌های بیشتری هم دارد؛ برای نمودار کل داده، ' +
+      'GROUP BY را در پرس‌وجو بنویسید.' : '.');
+
+  // Everything the chart is NOT showing, in one place.
+  //
+  // Both of these are silent losses if they are not said out loud: a value
+  // that could not be read is absent from a chart that otherwise looks
+  // complete, and a logarithmic axis simply omits anything at or below nought
+  // without adjusting its own scale to admit it.
+  const notes = [];
+  if (d.unreadable) {
+    notes.push(faNum.format(d.unreadable) +
+      ' مقدار عددی خوانده نشد و در نمودار نیامد؛ این ستون‌ها در پایگاه داده متن‌اند ' +
+      'و ممکن است واحد یا حرف داشته باشند.');
+  }
+  if (CHART.log_scale) {
+    const np = countNonPositive(d);
+    if (np) {
+      notes.push(faNum.format(np) +
+        ' مقدار صفر یا منفی است و روی محور لگاریتمی رسم نمی‌شود؛ ' +
+        'برای دیدن همهٔ مقدارها «محور لگاریتمی» را بردارید.');
+    }
+  }
+  if (d.single) {
+    notes.push('همهٔ مقدارها یکی است، پس توزیع یک بازه دارد.');
+  }
+  // A comparison that was asked for and could not be drawn.
+  //
+  // The chart still draws -- as the one continuous line it was before -- which
+  // is why this has to be said. Otherwise the reader set a comparison, got a
+  // picture, and has no way to know it is not the picture they asked for.
+  if (d.compareNote) {
+    notes.push('مقایسهٔ دوره‌ها انجام نشد: ' + d.compareNote);
+  }
+  const warn = $('chartWarn');
+  warn.hidden = notes.length === 0;
+  warn.textContent = notes.join(' ');
+}
+
+// renderChartEditor draws the column choosers from the result's own columns.
+function renderChartEditor() {
+  const wrap = $('chartWrap');
+  const res = LAST_RESULT;
+  wrap.hidden = !res || !res.columns || !res.columns.length;
+  if (wrap.hidden) { $('chartRow').innerHTML = ''; return; }
+
+  // The type is chosen from the gallery above, not from a dropdown here, so
+  // this row is only the details of the type already chosen. Which details
+  // exist depends on the type, and the flags that decide come from the server
+  // -- the same ones CleanChart validates against, so a control that appears
+  // is a control that saves.
+  const c = CHART;
+  if (!c || !c.kind) {
+    $('chartRow').innerHTML = '';
+    $('chartHint').textContent =
+      'روی یکی از کاشی‌های بالا بزنید. هر کاشی با داده‌های همین نتیجه کشیده شده است.';
+    return;
+  }
+
+  const opt = (v, sel, text) =>
+    `<option value="${esc(v)}"${v === sel ? ' selected' : ''}>${esc(text ?? v)}</option>`;
+  const kind = chartKindOf(c.kind) || {};
+  const counting = c.agg === 'count';
+
+  // A distribution has no category column and nothing to aggregate: it asks
+  // one question of one column. Showing the other controls greyed would imply
+  // they are relevant.
+  const parts = [];
+  if (kind.bins) {
+    parts.push(`<label>ستون عددی
+      <select class="select" id="cValues">
+        ${columnOptions(res, (c.values || [])[0] || '', 'انتخاب کنید…')}
+      </select>
+    </label>`);
+    parts.push(`<label>تعداد بازه‌ها
+      <input class="input" id="cBins" type="number" min="3" max="60"
+             value="${c.bins || 12}">
+    </label>`);
+  } else {
+    parts.push(`<label>${kind.numeric_label ? 'محور افقی (عدد)' : 'ستون دسته‌ها'}
+      <select class="select" id="cLabel">
+        ${columnOptions(res, c.label, 'انتخاب کنید…')}
+      </select>
+    </label>`);
+
+    if (!kind.no_agg) {
+      parts.push(`<label>جمع‌بندی ردیف‌های هم‌دسته
+        <select class="select" id="cAgg">
+          ${CHART_AGGS.filter(a => !(kind.min_values > 1 && a.id === 'count'))
+            .map(a => opt(a.id, c.agg, a.label)).join('')}
+        </select>
+      </label>`);
+      parts.push(`<label>گروه‌بندی تاریخ‌ها
+        <select class="select" id="cBucket">
+          ${CHART_BUCKETS.map(b => opt(b.id, c.bucket || '', b.label)).join('')}
+        </select>
+      </label>`);
+      // Only the comparisons THIS grouping can actually draw.
+      //
+      // Each mode needs the grouping that leaves its axis in the label --
+      // year-on-year needs months, month-on-month needs days -- so offering
+      // both under one grouping would put a mode in the list that saves and
+      // then never draws. Filtered rather than shown-and-refused: the reader
+      // never sees a choice that cannot work.
+      const fits = CHART_COMPARES.filter(x => !x.id || x.needs_bucket === c.bucket);
+      if (fits.length > 1) {
+        parts.push(`<label>مقایسهٔ دوره‌ها
+          <select class="select" id="cCompare">
+            ${fits.map(x => opt(x.id, c.compare || '', x.label)).join('')}
+          </select>
+        </label>`);
+      }
+    }
+
+    if (!counting) {
+      const one = kind.single || kind.numeric_label;
+      parts.push(`<label>${kind.numeric_label ? 'محور عمودی (عدد)' : 'ستون‌های مقدار'}${
+          one ? '' : ' (با Ctrl چندتا)'}
+        <select class="select" id="cValues" ${one ? '' : 'multiple'}>
+          ${one ? columnOptions(res, (c.values || [])[0] || '', 'انتخاب کنید…')
+                : res.columns.map((x, i) => x === c.label ? '' : (() => {
+                    const head = headingFor(res, i);
+                    const shown = head === x ? x : head + ' (' + x + ')';
+                    return `<option value="${esc(x)}"${(c.values || []).includes(x) ? ' selected' : ''}>${esc(shown)}</option>`;
+                  })()).join('')}
+        </select>
+      </label>`);
+    }
+  }
+
+  parts.push(`<label>عنوان نمودار (اختیاری)
+    <input class="input" id="cTitle" maxlength="120" value="${esc(c.title || '')}">
+  </label>`);
+
+  if (kind.stackable && !counting) {
+    parts.push(`<label style="align-self:center">
+      <input type="checkbox" id="cStacked"${c.stacked ? ' checked' : ''}> روی هم (انباشته)
+    </label>`);
+  }
+  // Offered on every kind that HAS a value axis, because this data needs it:
+  // the weights run from 10.45 to 52,689 and on a linear axis the small ones
+  // are a flat line along the bottom.
+  //
+  // Not on a pie or doughnut, which have no axis to make logarithmic, nor on
+  // a percentage chart, whose axis is already fixed at nought to a hundred.
+  if (c.kind !== 'pie' && c.kind !== 'doughnut' && c.kind !== 'sbar') {
+    parts.push(`<label style="align-self:center">
+      <input type="checkbox" id="cLog"${c.log_scale ? ' checked' : ''}> محور لگاریتمی
+    </label>`);
+  }
+
+  $('chartRow').innerHTML = parts.join('');
+
+  const bucket = CHART_BUCKETS.find(b => b.id === (c.bucket || ''));
+  const cmp = CHART_COMPARES.find(x => x.id === (c.compare || ''));
+  $('chartHint').textContent = [
+    kind.hint,
+    !kind.no_agg && chartAggOf(c.agg) && chartAggOf(c.agg).hint,
+    c.bucket && bucket && bucket.hint,
+    c.compare && cmp && cmp.hint,
+  ].filter(Boolean).join(' ');
+}
+
+// readChart pulls the chart settings back out of the form.
+function readChart() {
+  if (!CHART || !CHART.kind) { CHART = null; return null; }
+  const kind = chartKindOf(CHART.kind) || {};
+  const vals = $('cValues');
+  const label = $('cLabel') ? $('cLabel').value : (kind.bins ? '' : CHART.label);
+  const bins = $('cBins');
+
+  CHART = {
+    kind: CHART.kind,
+    label,
+    agg: $('cAgg') ? $('cAgg').value : (kind.no_agg ? 'none' : CHART.agg || 'sum'),
+    bucket: $('cBucket') ? $('cBucket').value : '',
+    compare: $('cCompare') ? $('cCompare').value : '',
+    values: (!vals ? (CHART.values || [])
+      : (vals.multiple ? [...vals.selectedOptions].map(o => o.value)
+                       : (vals.value ? [vals.value] : [])))
+      // The list on screen excludes the label column, but a selection made
+      // before the label changed can still name it -- and saving that would
+      // be refused for plotting a column against itself.
+      .filter(v => v && v !== label),
+    stacked: !!($('cStacked') && $('cStacked').checked),
+    log_scale: !!($('cLog') && $('cLog').checked),
+    bins: bins ? (parseInt(bins.value, 10) || 12) : (CHART.bins || 0),
+    title: $('cTitle') ? $('cTitle').value.trim() : (CHART.title || ''),
+  };
+
+  // A comparison is dropped unless the grouping now in force is the one it
+  // needs, checked HERE rather than left to whether its control is on screen.
+  //
+  // Changing the grouping fires this before the row is rebuilt, so at this
+  // moment the old comparison is still in the DOM: switching from months to
+  // days would otherwise carry a year-on-year comparison onto day-grouped
+  // labels, where every day of a month lands on the same position and all but
+  // one is silently overwritten. A drawn chart, a wrong chart, and nothing
+  // said -- so the rule is enforced on the value, not on the control.
+  if (CHART.compare) {
+    const mode = CHART_COMPARES.find(x => x.id === CHART.compare);
+    if (!mode || mode.needs_bucket !== CHART.bucket) CHART.compare = '';
+  }
+  return CHART;
+}
+
+// --------------------------------------------------------------- columns
+
+// COLUMNS is what this report calls its columns, and which it hides. Only the
+// ones it has something to say about -- everything else keeps the name the
+// query gave it.
+let COLUMNS = [];
+// COLSUGGEST is what the server says each column of the last result will be
+// called, and where that name came from.
+let COLSUGGEST = [];
+
+const colSpecFor = name =>
+  COLUMNS.find(c => c.name.toLowerCase() === String(name).toLowerCase());
+
+// headingFor is what to print above a column.
+//
+// Read from the result the server described rather than recomputed here: the
+// rule that decides it (the query's alias, then this report's label) lives
+// on the server, and a second implementation in the page would be a second
+// answer.
+function headingFor(res, i) {
+  if (res && res.headings && res.headings[i]) return res.headings[i];
+  return res ? res.columns[i] : '';
+}
+
+const SRC_TEXT = {
+  query: 'از خود پرس‌وجو',
+  custom: 'عنوان این گزارش',
+};
+
+// loadColumnSuggestions asks the server what the last result's columns will be
+// called.
+async function loadColumnSuggestions() {
+  const res = LAST_RESULT;
+  if (!res || !res.columns || !res.columns.length) { COLSUGGEST = []; return; }
+  try {
+    const r = await api('/api/builder/params', {
+      method: 'POST',
+      body: JSON.stringify({ sql: $('sql').value, result: res.columns, columns: COLUMNS }),
+    });
+    if (!r.ok) { COLSUGGEST = []; return; }
+    const d = await r.json();
+    COLSUGGEST = d.columns || [];
+    KINDS = d.kinds || KINDS;
+    CHART_KINDS = d.charts || CHART_KINDS;
+    CHART_AGGS = d.chartAggs || CHART_AGGS;
+  CHART_BUCKETS = d.chartBuckets || CHART_BUCKETS;
+  CHART_COMPARES = d.chartCompares || CHART_COMPARES;
+  } catch (e) { COLSUGGEST = []; }
+}
+
+function renderColumnEditor() {
+  const wrap = $('colsWrap');
+  const res = LAST_RESULT;
+  wrap.hidden = !res || !res.columns || !res.columns.length;
+  if (wrap.hidden) { $('colsGrid').innerHTML = ''; return; }
+
+  const unnamed = COLSUGGEST.filter(s => !s.source).length;
+  $('colsState').textContent = unnamed
+    ? faNum.format(unnamed) + ' ستون عنوان فارسی ندارد'
+    : 'همهٔ ستون‌ها عنوان دارند';
+
+  $('colsGrid').innerHTML =
+    '<div class="colhead">ستون در پایگاه داده</div>' +
+    '<div class="colhead">عنوانی که خواننده می‌بیند</div>' +
+    '<div class="colhead"></div>' +
+    '<div class="colhead colhide" title="عنوان شغلی را از نام‌ها جدا می‌کند">نام افراد</div>' +
+    '<div class="colhead colhide">پنهان</div>' +
+    res.columns.map((name, i) => {
+      const s = COLSUGGEST[i] || { name, label: name, source: '' };
+      const spec = colSpecFor(name) || {};
+      // The box shows the report's OWN label only. Leaving it empty where the
+      // query already names the column is what keeps the editor honest:
+      // a box pre-filled with an inherited value looks like a decision this
+      // report made, and would then be saved as one.
+      const own = spec.label || '';
+      const src = s.source ? (SRC_TEXT[s.source] || '') : 'عنوانی ندارد';
+      return `<div class="colname" title="${esc(name)}">${esc(name)}</div>
+        <div><input class="input" type="text" data-collabel="${i}"
+             value="${esc(own)}" maxlength="80"
+             placeholder="${esc(s.label || name)}"></div>
+        <div class="colsrc${s.source ? '' : ' none'}">${esc(src)}</div>
+        <div class="colhide"><input type="checkbox" data-colperson="${i}"
+             ${spec.person ? 'checked' : ''}
+             title="این ستون نام افراد است: عنوان شغلیِ چسبیده به نام جدا می‌شود تا یک نفر دو بار شمرده نشود"></div>
+        <div class="colhide"><input type="checkbox" data-colhide="${i}"
+             ${s.hidden ? 'checked' : ''}
+             title="در جدول و فایل CSV نیاید"></div>`;
+    }).join('');
+}
+
+// readColumns pulls the column decisions back out of the form.
+//
+// Only rows that SAY something are kept -- a label typed, or a hide state that
+// differs from the default. Storing the rest would fill the saved report with
+// "this column is called what it is already called", and the next person to
+// read the file could not tell which headings were chosen.
+function readColumns() {
+  const grid = $('colsGrid');
+  const res = LAST_RESULT;
+  if (!res || !grid.children.length) return COLUMNS;
+
+  const out = [];
+  res.columns.forEach((name, i) => {
+    const labelEl = grid.querySelector(`[data-collabel="${i}"]`);
+    const hideEl = grid.querySelector(`[data-colhide="${i}"]`);
+    const personEl = grid.querySelector(`[data-colperson="${i}"]`);
+    const label = labelEl ? labelEl.value.trim() : '';
+    const hidden = !!(hideEl && hideEl.checked);
+
+    // Every column is shown unless the report hides it, so a hide is what
+    // has to be recorded.
+    const spec = { name };
+    if (label) spec.label = label;
+    if (hidden) spec.hide = true;
+    if (personEl && personEl.checked) spec.person = true;
+    if (spec.label || spec.hide || spec.show || spec.person) out.push(spec);
+  });
+  COLUMNS = out;
+  return COLUMNS;
+}
+
+// columnOptions builds a <select> list over the result's columns, showing the
+// heading and carrying the database name.
+//
+// Used by the chart and detail choosers. They have to send the raw name -- it
+// is what the query returns -- but asking somebody to pick "STATUS_OF_SHIPPING_LABEL"
+// from a list when the table above says «وضعیت ارسال» is asking them to hold
+// two names for one column in their head.
+function columnOptions(res, selected, blank) {
+  const out = [];
+  if (blank) out.push(`<option value=""${selected ? '' : ' selected'}>${esc(blank)}</option>`);
+  res.columns.forEach((name, i) => {
+    const head = headingFor(res, i);
+    const shown = head === name ? name : head + ' (' + name + ')';
+    out.push(`<option value="${esc(name)}"${name === selected ? ' selected' : ''}>${esc(shown)}</option>`);
+  });
+  return out.join('');
+}
+
+// ---------------------------------------------------------------- detail
+
+// DETAIL is the second query, or null. Most reports have none.
+let DETAIL = null;
+
+// renderDetailEditor draws the key chooser from the result's own columns.
+function renderDetailEditor() {
+  const wrap = $('detailWrap');
+  const res = LAST_RESULT;
+  wrap.hidden = !res || !res.columns || !res.columns.length;
+  if (wrap.hidden) { $('detailRow').innerHTML = ''; return; }
+
+  const d = DETAIL || { sql: '', key: '', title: '' };
+  $('detailRow').innerHTML = `
+    <label>ستون کلید: مقداری که <code>@key</code> می‌گیرد
+      <select class="select" id="dKey">
+        ${columnOptions(res, d.key, 'انتخاب کنید…')}
+      </select>
+    </label>
+    <label>عنوان بخش جزئیات (اختیاری)
+      <input class="input" id="dTitle" maxlength="120" value="${esc(d.title || '')}">
+    </label>`;
+  // The query itself lives outside the row, because it is a code editor and
+  // does not belong in a grid of one-line controls.
+  if ($('detailSQL').value !== (d.sql || '')) $('detailSQL').value = d.sql || '';
+}
+
+function readDetail() {
+  const sql = $('detailSQL') ? $('detailSQL').value.trim() : '';
+  if (!sql) { DETAIL = null; return null; }
+  DETAIL = {
+    sql,
+    key: $('dKey') ? $('dKey').value : '',
+    title: $('dTitle') ? $('dTitle').value.trim() : '',
+  };
+  return DETAIL;
+}
+
+// detailReady says whether a row can be opened, and why not if it cannot.
+//
+// Checked in the page as well as on the server, because the page is where the
+// answer is useful: the server can only say "@key is missing", while here the
+// row simply does not offer to open and the panel says what is needed.
+function detailReady() {
+  if (!DETAIL || !DETAIL.sql) return '';
+  if (!DETAIL.key) return 'ستون کلید را انتخاب کنید.';
+  if (LAST_RESULT && !LAST_RESULT.columns.includes(DETAIL.key)) {
+    return 'ستون کلید «' + DETAIL.key + '» در نتیجه نیست.';
+  }
+  // Matched the way the server matches it, so the page and the server agree
+  // about whether a row is openable.
+  if (!/(^|[^\w@])@key($|[^\w])/.test(DETAIL.sql)) {
+    return 'پرس‌وجوی جزئیات باید @key را به‌کار ببرد، وگرنه همهٔ ردیف‌ها یک چیز را نشان می‌دهند.';
+  }
+  return 'ok';
+}
+
+// toggleDetail opens or closes the expansion under one master row.
+async function toggleDetail(tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains('detailrow')) {
+    next.remove();
+    tr.classList.remove('open');
+    return;
+  }
+  // Only one open at a time. Several expansions at once turns the table into
+  // a list of lists, and the point of this is to look at one row.
+  const table = tr.closest('table');
+  table.querySelectorAll('tr.detailrow').forEach(x => x.remove());
+  table.querySelectorAll('tr.open').forEach(x => x.classList.remove('open'));
+  tr.classList.add('open');
+
+  const cols = tr.children.length;
+  const row = document.createElement('tr');
+  row.className = 'detailrow';
+  row.innerHTML = `<td colspan="${cols}"><div class="detailwrap">
+    <p class="hint" style="margin:0">در حال خواندن…</p></div></td>`;
+  tr.after(row);
+
+  const body = { key: tr.dataset.key || '', values: paramValues(), page: 1, per_page: 200 };
+  // A saved report runs its own stored detail; a draft sends the one on screen
+  // along with its filters. Same route, same binding.
+  if (EDITING && EDITING.id && EDITING.detail) {
+    body.report_id = EDITING.id;
+  } else {
+    body.source = $('runSource').value;
+    body.sql = DETAIL.sql;
+    body.params = PARAMS;
+    body.columns = COLUMNS;
+  }
+
+  const wrap = row.querySelector('.detailwrap');
+  try {
+    const r = await api('/api/builder/detail', { method: 'POST', body: JSON.stringify(body) });
+    if (!r.ok) {
+      wrap.innerHTML = `<div class="err-sql">جزئیات خوانده نشد.<code>${esc(await errorOf(r))}</code></div>`;
+      return;
+    }
+    const res = await r.json();
+    const head = (DETAIL.title ? `<h5>${esc(DETAIL.title)}</h5>` : '');
+    if (!res.rows.length) {
+      wrap.innerHTML = head +
+        '<div class="empty"><div>برای این ردیف چیزی ثبت نشده است.</div></div>';
+      return;
+    }
+    // The detail's own columns get headings the same way the master's do, so
+    // an opened row reads like the rest of the product rather than like the
+    // aliases somebody typed.
+    const dshown = res.columns.map((_, i) => i)
+      .filter(i => !(res.hidden && res.hidden[i]));
+    wrap.innerHTML = head +
+      '<div class="table-scroll"><table class="data"><thead><tr>' +
+      dshown.map(i => `<th>${esc(headingFor(res, i))}</th>`).join('') +
+      '</tr></thead><tbody>' +
+      res.rows.map(rr => '<tr>' + dshown.map(i =>
+        `<td><span class="v">${rr[i] === null || rr[i] === undefined ? '' : esc(rr[i])}</span></td>`
+      ).join('') + '</tr>').join('') +
+      '</tbody></table></div>' +
+      `<p class="chartfoot">${faNum.format(res.rows.length)} ردیف` +
+      (res.has_more ? ' (بیشتر هم هست)' : '') + '</p>';
+  } catch (e) {
+    if (e.message !== 'unauthenticated') {
+      wrap.innerHTML = `<div class="err-sql">جزئیات خوانده نشد.<code>${esc(e.message || '')}</code></div>`;
+    }
+  }
+}
+
+// ------------------------------------------------------------------- run
+
+function renderResult(res) {
+  const box = $('resBox');
+  if (!res.rows.length) {
+    box.innerHTML = '<div class="empty"><div>پرس‌وجو اجرا شد و ردیفی برنگرداند.</div></div>';
+    return;
+  }
+  // Which columns the table shows, and under what heading.
+  //
+  // Hidden columns are left out of the TABLE only -- their values are still in
+  // every row, which is what lets a detail query key on a case number nobody
+  // wants to read and a chart plot a column nobody wants a table of.
+  const show = res.columns.map((_, i) => !(res.hidden && res.hidden[i]));
+  const shown = res.columns.map((_, i) => i).filter(i => show[i]);
+
+  const head = '<tr><th class="rownum">#</th>' + shown.map(i => {
+    const heading = headingFor(res, i);
+    // The database name under the heading when they differ, because the
+    // person editing the query needs to know which column this is, and the
+    // type beside it for the same reason it was always there.
+    const sub = [heading === res.columns[i] ? '' : res.columns[i],
+                 (res.types && res.types[i]) || ''].filter(Boolean).join(' · ');
+    return `<th>${esc(heading)}${sub ? `<span class="t">${esc(sub)}</span>` : ''}</th>`;
+  }).join('') + '</tr>';
+
+  // A row can be opened when there is a detail query that can run for it. The
+  // key travels on the row as data, so clicking reads it from the row itself
+  // rather than from an index into a list that may have been re-rendered.
+  const openable = detailReady() === 'ok';
+  const keyIdx = openable ? res.columns.indexOf(DETAIL.key) : -1;
+
+  const start = (res.page - 1) * res.per_page;
+  const body = res.rows.map((row, n) => {
+    const key = keyIdx >= 0 && row[keyIdx] !== null ? String(row[keyIdx]) : '';
+    // No marker on a row with no key: it would open to nothing, and offering
+    // that is worse than not offering it.
+    const can = openable && key !== '';
+    return `<tr${can ? ' class="openable" data-key="' + esc(key) + '"' : ''}>` +
+      '<td class="rownum">' + faNum.format(start + n + 1) + '</td>' +
+      shown.map(i => {
+        const v = row[i];
+        return `<td><span class="v">${v === null || v === undefined ? '' : esc(v)}</span></td>`;
+      }).join('') +
+      '</tr>';
+  }).join('');
+
+  box.innerHTML =
+    `<div class="resmeta">
+       <span><b>${faNum.format(res.rows.length)}</b> ردیف</span>
+       <span><b>${faNum.format(shown.length)}</b> ستون${
+         shown.length === res.columns.length ? '' :
+         ` (${faNum.format(res.columns.length - shown.length)} پنهان)`}</span>
+       <span><b>${faNum.format(res.took_ms)}</b> میلی‌ثانیه</span>
+       <span>صفحه <b>${faNum.format(res.page)}</b></span>
+       ${res.truncated ? `<span>${faNum.format(res.truncated)} مقدار طولانی کوتاه شد</span>` : ''}
+     </div>
+     <div class="table-scroll"><table class="data"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+     <div class="pager">
+       <button class="btn" id="prevPage"${res.page <= 1 ? ' disabled' : ''}>قبلی</button>
+       <button class="btn" id="nextPage"${res.has_more ? '' : ' disabled'}>بعدی</button>
+       <span class="spacer" style="margin-inline-start:auto"></span>
+       ${EDITING && EDITING.id
+         ? `<a class="btn" id="csvHere" href="${esc(exportURL(EDITING.id))}">CSV همین نتیجه</a>` : ''}
+       <button class="btn" type="button" id="resPdf">${window.PDF_ICON || ''}<span>خروجی PDF</span></button>
+     </div>`;
+
+  $('prevPage').onclick = () => run(res.page - 1);
+  $('nextPage').onclick = () => run(res.page + 1);
+
+  // The same export the shipped reports have. It works here because the print
+  // code walks whatever canvases and tables are on the page rather than
+  // knowing anything about reports -- which is why it now lives in nav.js.
+  //
+  // The masthead carries the filter values and the page, for the reason it
+  // does everywhere else: this is a page of a result, not the result, and a
+  // sheet that does not say so gets read as the whole answer.
+  $('resPdf').onclick = () => {
+    if (typeof window.exportPDF !== 'function') return;
+    const lines = [];
+    const values = paramValues();
+    for (const p of PARAMS) {
+      if (values[p.name]) lines.push((p.label || p.name) + ': ' + values[p.name]);
+    }
+    lines.push('صفحه ' + faNum.format(res.page) +
+               '، ' + faNum.format(res.rows.length) + ' ردیف');
+    if (res.has_more) {
+      lines.push('این برگه فقط ردیف‌های همین صفحه را دارد؛ برای همهٔ ردیف‌ها خروجی CSV بگیرید');
+    }
+    const title = ($('repTitle') && $('repTitle').value.trim()) ||
+                  (EDITING && EDITING.title) || 'پرس‌وجوی سفارشی';
+    window.exportPDF(title, lines);
+  };
+
+  // Delegated, so it survives paging without being re-bound per row.
+  const table = box.querySelector('table.data');
+  if (table && openable) {
+    table.addEventListener('click', e => {
+      const tr = e.target.closest('tr.openable');
+      if (tr) toggleDetail(tr);
+    });
+  }
+}
+
+// exportURL carries the filter values that are on screen into the download.
+//
+// Built at render time from the boxes as they stand, not from the report's
+// defaults. A CSV holding more rows than the table it was downloaded from is
+// the kind of discrepancy that ends up in a meeting.
+function exportURL(id) {
+  const q = new URLSearchParams({ id });
+  const values = paramValues();
+  for (const [k, v] of Object.entries(values)) q.set(k, v);
+  return '/api/builder/export?' + q.toString();
+}
+
+function showSqlError(msg) {
+  $('sqlErr').innerHTML =
+    `<div class="err-sql">پرس‌وجو اجرا نشد.<code>${esc(msg)}</code></div>`;
+}
+
+async function run(page) {
+  const id = $('runSource').value;
+  const sql = $('sql').value;
+  if (!id) { toast('اول یک اتصال بسازید.', 'bad'); return; }
+  if (!sql.trim()) { toast('پرس‌وجو خالی است.', 'bad'); return; }
+  $('sqlErr').innerHTML = '';
+  $('runBtn').disabled = true;
+  try {
+    const r = await busy(api('/api/builder/run', {
+      method: 'POST',
+      body: JSON.stringify({
+        source: id, sql,
+        // Declarations and values both, read from the form at the moment of
+        // the run. That makes the preview the same thing as the save: whatever
+        // is on screen is what gets checked, so a filter cannot preview
+        // cleanly and then be refused.
+        params: readDecls(),
+        values: paramValues(),
+        columns: readColumns(),
+        page: page || 1,
+        per_page: parseInt($('perPage').value, 10) || 100,
+      }),
+    }));
+    if (!r.ok) {
+      showSqlError(await errorOf(r));
+      $('resBox').innerHTML = '';
+      // The chart belonged to the result that just failed, so it must go too.
+      // Leaving it up would show figures from the previous query beside an
+      // error about this one.
+      LAST_RESULT = null;
+      $('chartBox').hidden = true;
+      return;
+    }
+    LAST_RESULT = await r.json();
+    // The column suggestions come from the server, which holds the rule that
+    // names them. Asked with the result's own column names,
+    // because "SELECT *" does not say what they are.
+    await loadColumnSuggestions();
+    renderColumnEditor();
+    // The detail editor is rendered BEFORE the table, because the table needs
+    // to know whether its rows can be opened.
+    renderDetailEditor();
+    const why = detailReady();
+    $('detailState').textContent = why === 'ok' ? '' : why;
+    renderResult(LAST_RESULT);
+    renderChartEditor();
+    await drawChart();
+    await renderGallery();
+  } catch (e) {
+    if (e.message !== 'unauthenticated') showSqlError(e.message || 'ارتباط برقرار نشد.');
+  } finally { $('runBtn').disabled = false; }
+}
+
+// --------------------------------------------------------- saved reports
+
+function renderReports(list) {
+  const box = $('repGrid');
+  if (!list.length) {
+    box.innerHTML = '<p class="hint" style="margin:0">' +
+      'هنوز گزارشی ذخیره نشده است.</p>';
+    return;
+  }
+  box.innerHTML = list.map(r => {
+    const src = SOURCES.find(s => s.id === r.source_id);
+    // h3, not h4: the section above these cards is an h2, and a heading that
+    // skips a level tells a screen-reader user there is a level they missed.
+    return `<div class="repcard">
+      <h3>${esc(r.title)}</h3>
+      ${r.description ? `<p>${esc(r.description)}</p>` : ''}
+      <div class="meta">
+        ${src ? esc(src.name) : '<b>اتصال این گزارش حذف شده است</b>'}
+        ${r.author ? '، ' + esc(r.author) : ''}
+      </div>
+      <div class="acts">
+        <button class="btn btn-sm btn-primary" data-open="${esc(r.id)}">اجرا</button>
+        <button class="btn btn-sm" data-editrep="${esc(r.id)}">ویرایش</button>
+        <a class="btn btn-sm" href="/api/builder/export?id=${encodeURIComponent(r.id)}">CSV</a>
+        <button class="btn btn-sm btn-ghost" data-delrep="${esc(r.id)}">حذف</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// loadReportIntoEditor puts a saved report back on screen.
+//
+// One function for the two buttons that do it -- "run" and "edit" differ only
+// in what they do afterwards, and having each set up the editor itself is how
+// one of them ends up forgetting the filters.
+function loadReportIntoEditor(rep) {
+  $('sql').value = rep.sql;
+  if (SOURCES.some(s => s.id === rep.source_id)) $('runSource').value = rep.source_id;
+  PARAMS = (rep.params || []).map(p => ({ ...p }));
+  USED_NAMES = PARAMS.map(p => p.name);
+  renderParams();
+  // The chart is restored before the run, so the run draws it. Restoring it
+  // afterwards would show the table first and the chart a moment later, which
+  // reads as the page still loading.
+  COLUMNS = (rep.columns || []).map(c => ({ ...c }));
+  COLSUGGEST = [];
+  CHART = rep.chart ? { ...rep.chart, values: [...(rep.chart.values || [])] } : null;
+  DETAIL = rep.detail ? { ...rep.detail } : null;
+  $('detailSQL').value = DETAIL ? DETAIL.sql : '';
+  LAST_RESULT = null;
+  $('chartBox').hidden = true;
+  $('chartWrap').hidden = true;
+  $('detailWrap').hidden = true;
+  $('colsWrap').hidden = true;
+}
+
+// applyDefaults fills each filter box with the report's own default.
+//
+// Shown rather than left blank, even though a blank box and a box holding the
+// default produce the same query. The reader has to be able to see what the
+// report is currently filtered by: an empty box beside "1404" worth of results
+// is the interface saying nothing while the data says otherwise.
+function applyDefaults() {
+  const box = $('paramsBox');
+  PARAMS.forEach((p, i) => {
+    const el = box.querySelector(`[data-val="${i}"]`);
+    if (el && p.default) el.value = p.default;
+  });
+}
+
+let REPORTS = [];
+async function loadReports() {
+  const d = await (await api('/api/builder/reports')).json();
+  REPORTS = d.reports || [];
+  renderReports(REPORTS);
+}
+
+// ------------------------------------------------------------------ wiring
+
+function wire() {
+  // --- connections
+  $('newSrcBtn').addEventListener('click', () => openSourceForm(null));
+  $('srcCancel').addEventListener('click', () => { $('srcForm').hidden = true; });
+  $('srcDriver').addEventListener('change', showExample);
+
+  $('srcForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('srcMsg').textContent = 'در حال ذخیره…';
+    const r = await api('/api/builder/sources', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: $('srcForm').dataset.id || '',
+        name: $('srcName').value,
+        driver: $('srcDriver').value,
+        note: $('srcNote').value,
+        dsn: $('srcDSN').value,
+      }),
+    });
+    if (!r.ok) { $('srcMsg').textContent = await errorOf(r); return; }
+    $('srcMsg').textContent = '';
+    $('srcForm').hidden = true;
+    await loadSources();
+    toast('اتصال ذخیره شد.');
+  });
+
+  // Test what is typed if there is something typed, and the saved one
+  // otherwise -- which is the only way to test a connection whose string the
+  // browser was never given.
+  $('srcTest').addEventListener('click', async () => {
+    $('srcMsg').textContent = 'در حال آزمودن…';
+    const body = $('srcDSN').value.trim()
+      ? { driver: $('srcDriver').value, dsn: $('srcDSN').value }
+      : { id: $('srcForm').dataset.id || '' };
+    const d = await (await api('/api/builder/test', {
+      method: 'POST', body: JSON.stringify(body),
+    })).json();
+    $('srcMsg').textContent = d.ok
+      ? 'وصل شد' + (d.server ? ': ' + d.server : '') + ` (${faNum.format(d.took_ms)}ms)`
+      : 'وصل نشد: ' + (d.message || '');
+  });
+
+  $('srcList').addEventListener('click', async e => {
+    const row = e.target.closest('[data-id]');
+    const test = e.target.closest('[data-test]');
+    const edit = e.target.closest('[data-edit]');
+    const del = e.target.closest('[data-del]');
+
+    if (test) {
+      const d = await (await api('/api/builder/test', {
+        method: 'POST', body: JSON.stringify({ id: test.dataset.test }),
+      })).json();
+      toast(d.ok ? 'وصل شد' + (d.server ? ': ' + d.server : '') : 'وصل نشد: ' + d.message,
+            d.ok ? 'ok' : 'bad');
+      return;
+    }
+    if (edit) {
+      openSourceForm(SOURCES.find(s => s.id === edit.dataset.edit));
+      return;
+    }
+    if (del) {
+      const id = del.dataset.del;
+      let r = await api('/api/builder/sources?id=' + encodeURIComponent(id), { method: 'DELETE' });
+      let d = await r.json();
+      // Reports depend on it. Named, then confirmed -- deleting a connection
+      // three reports use is a decision, not a click.
+      if (d && d.in_use) {
+        if (!confirm('این اتصال در این گزارش‌ها استفاده شده است:\n\n• ' +
+                     d.in_use.join('\n• ') + '\n\nباز هم حذف شود؟')) return;
+        r = await api('/api/builder/sources?id=' + encodeURIComponent(id) + '&force=1',
+                      { method: 'DELETE' });
+        d = await r.json();
+      }
+      if (!r.ok || (d && d.error && !d.ok)) { toast(d.error || 'حذف نشد.', 'bad'); return; }
+      await loadSources();
+      await loadReports();
+      toast('اتصال حذف شد.');
+      return;
+    }
+    if (row) {
+      $('runSource').value = row.dataset.id;
+      [...$('srcList').children].forEach(c => c.classList.toggle('on', c === row));
+    }
+  });
+
+  // --- schema
+  $('schemaBtn').addEventListener('click', loadSchema);
+  $('schemaFind').addEventListener('input', renderSchema);
+  $('schemaBox').addEventListener('click', e => {
+    const t = e.target.closest('[data-toggle]');
+    const ins = e.target.closest('[data-insert]');
+    if (t) {
+      const cols = $('schemaBox').querySelector(`[data-cols="${t.dataset.toggle}"]`);
+      if (cols) cols.classList.toggle('open');
+      // A click on the table row opens its columns; it does not also insert
+      // the name, because the commonest reason to click a table is to look
+      // inside it.
+      return;
+    }
+    if (ins) insertAtCursor(ins.dataset.insert);
+  });
+  // The connection changed, so the tables on screen belong to the wrong one.
+  $('runSource').addEventListener('change', () => {
+    if ($('runSource').value !== SCHEMA_FOR) {
+      SCHEMA = []; SCHEMA_FOR = '';
+      renderSchema();
+    }
+  });
+
+  // --- run
+  $('runBtn').addEventListener('click', () => run(1));
+  $('sql').addEventListener('keydown', e => {
+    // Ctrl+Enter, which is what every database client uses.
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(1); }
+  });
+
+  // --- filters
+  // On blur rather than on input. A request per keystroke would be wasteful,
+  // but the real reason is that rebuilding the panel mid-word moves the caret
+  // out from under whoever is typing -- and the filters panel is below the
+  // editor, so nothing is lost by waiting until they look away from it.
+  $('sql').addEventListener('blur', () => syncParams(true));
+  $('paramsSync').addEventListener('click', () => syncParams(false));
+
+  // A type is chosen, so the row has to become the controls that type needs --
+  // a dropdown grows an options box, a date grows a calendar choice.
+  $('paramsBox').addEventListener('change', e => {
+    const fill = e.target.closest('[data-fillfrom]');
+    if (fill) { fillOptionsFrom(fill); return; }
+    // The value box is only wired to a datalist when the row is rendered, so
+    // naming a suggestion source has to re-render -- on blur, not while the
+    // name is still being typed.
+    if (e.target.matches('[data-kind], [data-cal], [data-sug]')) {
+      readDecls();
+      renderParams();
+      return;
+    }
+    if (e.target.matches('[data-sugperson]')) readDecls();
+  });
+  // Completions as the reader types, and the declaration re-read when the
+  // source column changes so the box knows where to ask.
+  $('paramsBox').addEventListener('input', e => {
+    if (e.target.matches('[data-val]')) { suggestFor(e.target); return; }
+    if (e.target.matches('[data-sug]')) readDecls();
+  });
+  // Filling the box for the first time should offer something before a key is
+  // pressed, so the list is there when it is clicked into.
+  $('paramsBox').addEventListener('focusin', e => {
+    if (e.target.matches('[data-val]')) suggestFor(e.target);
+  });
+
+  // Enter in a filter box runs, which is what a filter box invites.
+  $('paramsBox').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.matches('[data-val]') &&
+        e.target.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      run(1);
+    }
+  });
+
+  // Which engine is selected decides which types are offered, so the panel is
+  // rebuilt when it changes -- otherwise "any of several values" would stay
+  // enabled after switching to SQL Server and be refused on save.
+  $('runSource').addEventListener('change', () => {
+    if (PARAMS.length) { readDecls(); renderParams(); }
+  });
+
+  // --- chart
+  // Redrawn on every change, with no "apply" button. The whole point of
+  // choosing a column here is to see what it looks like, and a chart that
+  // waits to be asked is one nobody experiments with.
+  //
+  // The combination and the label change which controls exist at all --
+  // counting needs no value column, and the value list never offers the
+  // column already used as the label -- so those rebuild the panel before the
+  // redraw. The TYPE is chosen from the gallery, which rebuilds everything.
+  $('chartRow').addEventListener('change', async e => {
+    readChart();
+    // The bucket decides whether the comparison control exists at all, so it
+    // rebuilds the row.
+    if (e.target.matches('#cAgg, #cLabel, #cBucket, #cCompare')) renderChartEditor();
+    await drawChart();
+    await renderGallery();
+  });
+  $('chartRow').addEventListener('input', async e => {
+    if (e.target.matches('#cTitle, #cBins')) { readChart(); await drawChart(); }
+  });
+
+  // --- the gallery
+  // One handler for the whole grid, because the tiles are rebuilt on every
+  // run and per-tile listeners would have to be rebound with them.
+  $('chartGallery').addEventListener('click', e => {
+    const tile = e.target.closest('.gtile');
+    if (tile && !tile.classList.contains('off')) pickKind(tile.dataset.kind);
+  });
+  // Reachable without a mouse: the tiles are buttons, so they answer to a key
+  // the way buttons do.
+  $('chartGallery').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const tile = e.target.closest('.gtile');
+    if (tile && !tile.classList.contains('off')) {
+      e.preventDefault();
+      pickKind(tile.dataset.kind);
+    }
+  });
+  $('chartNone').addEventListener('click', async () => {
+    CHART = null;
+    renderChartEditor();
+    await drawChart();
+    await renderGallery();
+  });
+
+  // --- columns
+  // A heading or a hide redraws the table from the result already in hand.
+  // No re-query: the rows have not changed, only what they are called and
+  // which of them are shown.
+  //
+  // The chart and detail panels are redrawn too, because their column lists
+  // show headings -- relabel a column and the chooser must say the new name.
+  const columnsChanged = async () => {
+    readColumns();
+    if (!LAST_RESULT) return;
+    LAST_RESULT.headings = LAST_RESULT.columns.map((name, i) => {
+      const own = COLUMNS.find(c => c.name.toLowerCase() === name.toLowerCase());
+      // The report's own label wins; otherwise fall back to what the server
+      // said, which already applied the query's alias.
+      if (own && own.label) return own.label;
+      const s = COLSUGGEST[i];
+      return (s && s.source !== 'custom' && s.label) || name;
+    });
+    LAST_RESULT.hidden = LAST_RESULT.columns.map((name, i) => {
+      const own = COLUMNS.find(c => c.name.toLowerCase() === name.toLowerCase());
+      if (own && own.hide) return true;
+      if (own && own.show) return false;
+      return false;
+    });
+    renderResult(LAST_RESULT);
+    renderChartEditor();
+    renderDetailEditor();
+    await drawChart();
+    // The gallery names its columns by their headings, so relabelling one has
+    // to redraw the tiles as well as the chart.
+    await renderGallery();
+  };
+  $('colsGrid').addEventListener('change', async e => {
+    // Folding people happens on the server, because the rule for what counts
+    // as the same person lives there and a second copy in this page would be
+    // a second answer. So this one control re-runs rather than redrawing --
+    // the values themselves change, not just what they are called.
+    if (e.target.matches('[data-colperson]')) {
+      readColumns();
+      await run(1);
+      return;
+    }
+    columnsChanged();
+  });
+  // Typing a heading updates the table as it is typed, which is the point of
+  // having the table right there.
+  $('colsGrid').addEventListener('input', e => {
+    if (e.target.matches('[data-collabel]')) columnsChanged();
+  });
+
+  // --- detail
+  // Changing the key or the query changes which rows can be opened, so the
+  // table is redrawn from the result already in hand rather than re-queried:
+  // the rows have not changed, only whether they carry a marker.
+  const detailChanged = () => {
+    readDetail();
+    const why = detailReady();
+    $('detailState').textContent = why === 'ok' ? '' : why;
+    if (LAST_RESULT) renderResult(LAST_RESULT);
+  };
+  $('detailRow').addEventListener('change', detailChanged);
+  // On blur for the query, for the same reason the main editor syncs on blur:
+  // redrawing the table under somebody mid-word is worse than waiting.
+  $('detailSQL').addEventListener('blur', detailChanged);
+
+  // --- saving
+  $('saveBtn').addEventListener('click', () => {
+    if (!$('sql').value.trim()) { toast('پرس‌وجو خالی است.', 'bad'); return; }
+    $('saveMsg').textContent = '';
+    $('repTitle').value = EDITING ? EDITING.title : '';
+    $('repDesc').value = EDITING ? (EDITING.description || '') : '';
+    $('saveSheet').showModal();
+    $('repTitle').focus();
+  });
+  $('saveSheet').addEventListener('click', e => {
+    if (e.target.closest('[data-close]') || e.target === $('saveSheet')) $('saveSheet').close();
+  });
+  $('saveForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('saveMsg').textContent = 'در حال ذخیره…';
+    const r = await api('/api/builder/reports', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: EDITING ? EDITING.id : '',
+        source_id: $('runSource').value,
+        title: $('repTitle').value,
+        description: $('repDesc').value,
+        sql: $('sql').value,
+        params: readDecls(),
+        columns: readColumns(),
+        chart: readChart(),
+        detail: readDetail(),
+      }),
+    });
+    if (!r.ok) { $('saveMsg').textContent = await errorOf(r); return; }
+    EDITING = await r.json();
+    $('saveSheet').close();
+    await loadReports();
+    toast('گزارش ذخیره شد.');
+  });
+
+  $('repGrid').addEventListener('click', async e => {
+    const open = e.target.closest('[data-open]');
+    const ed = e.target.closest('[data-editrep]');
+    const del = e.target.closest('[data-delrep]');
+    if (open) {
+      const rep = REPORTS.find(x => x.id === open.dataset.open);
+      if (!rep) return;
+      // Loaded into the editor as well as run, so "run" and "look at what it
+      // does" are the same action. An opaque saved report is one nobody
+      // trusts.
+      EDITING = rep;
+      loadReportIntoEditor(rep);
+      // The filter boxes start at their defaults, then it runs -- so opening a
+      // report shows the report, not an empty screen waiting for input.
+      await syncParams(true);
+      applyDefaults();
+      run(1);
+      $('sql').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    if (ed) {
+      const rep = REPORTS.find(x => x.id === ed.dataset.editrep);
+      if (!rep) return;
+      EDITING = rep;
+      loadReportIntoEditor(rep);
+      await syncParams(true);
+      toast('برای ذخیرهٔ تغییرات، «ذخیره به‌عنوان گزارش» را بزنید.');
+      $('sql').focus();
+      return;
+    }
+    if (del) {
+      const rep = REPORTS.find(x => x.id === del.dataset.delrep);
+      if (!rep || !confirm(`گزارش «${rep.title}» حذف شود؟`)) return;
+      const r = await api('/api/builder/reports?id=' + encodeURIComponent(rep.id), { method: 'DELETE' });
+      if (!r.ok) { toast(await errorOf(r), 'bad'); return; }
+      if (EDITING && EDITING.id === rep.id) EDITING = null;
+      await loadReports();
+      toast('گزارش حذف شد.');
+    }
+  });
+}
+
+// -------------------------------------------------------------------- boot
+
+async function init() {
+  try {
+    const meta = await (await api('/api/me')).json();
+    if (meta.auth_enabled && !meta.user) { location.replace('/login?next=/builder'); return; }
+    me = meta.user;
+    if (window.docfindPrefs) window.docfindPrefs.write((me && me.prefs) || null);
+    $('who').textContent = me ? (me.display_name || me.username) : '';
+    buildNav({
+      reports: true, admin: !!me && me.role === 'admin',
+      mail: !!(me && me.has_mail),
+      user: me ? (me.display_name || me.username) : null,
+      account: me,
+      onSignOut: () => fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
+        .finally(() => location.replace('/login')),
+    });
+  } catch (e) { return; }
+
+  // Administrators only, and said plainly rather than shown as an empty page.
+  //
+  // The server refuses every route on this page to anybody else, so this is
+  // not the access control -- it is the explanation. A viewer who follows a
+  // link here should be told why there is nothing for them, not left looking
+  // at skeletons that never fill in.
+  if (!me || me.role !== 'admin') {
+    $('main').innerHTML =
+      '<div class="card"><div class="card-body"><div class="empty"><div>' +
+      'ساختن گزارش تنها برای مدیر ارشد است.' +
+      '</div></div></div></div>';
+    return;
+  }
+
+  $('main').innerHTML = '';
+  $('main').appendChild($('tplBuilder').content.cloneNode(true));
+  wire();
+  try {
+    await loadSources();
+    await loadReports();
+    // With an empty editor this finds no filters; what it does do is fetch the
+    // list of filter types, so the first row rendered already has its dropdown
+    // instead of a fallback.
+    await syncParams(true);
+  } catch (e) {
+    if (e.message !== 'unauthenticated') {
+      failInto($('main'), 'خواندن تنظیمات سازندهٔ گزارش انجام نشد.');
+    }
+  }
+}
+
+// failInto is defined in the other pages' scripts rather than nav.js; a
+// third copy is not worth it for one call site.
+function failInto(el, text) {
+  el.innerHTML = `<div class="card"><div class="err">${esc(text)}</div></div>`;
+}
+
+const out = $('signout');
+if (out) out.addEventListener('click', () =>
+  fetch('/api/logout', { method: 'POST', credentials: 'same-origin' })
+    .finally(() => location.replace('/login')));
+
+init();
+</script>
+</body>
+</html>

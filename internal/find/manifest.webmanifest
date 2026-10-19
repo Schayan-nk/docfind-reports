@@ -1,0 +1,54 @@
+{
+  "id": "/",
+  "name": "گزارش‌ها",
+  "short_name": "گزارش‌ها",
+  "description": "گزارش‌های SQL با فیلتر، نمودار و خروجی، و ساختن گزارش تازه در مرورگر.",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#142F40",
+  "theme_color": "#142F40",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "گزارش‌ها",
+      "short_name": "گزارش‌ها",
+      "url": "/dashboard"
+    },
+    {
+      "name": "ساختن گزارش",
+      "short_name": "ساختن",
+      "url": "/builder"
+    },
+    {
+      "name": "تنظیمات",
+      "short_name": "تنظیمات",
+      "url": "/settings"
+    }
+  ]
+}
